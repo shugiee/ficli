@@ -101,6 +101,70 @@ int db_get_categories(sqlite3 *db, category_type_t type, category_t **out) {
     return count;
 }
 
+int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
+    *out = NULL;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db,
+        "SELECT t.id, t.amount_cents, t.type, t.date,"
+        "  CASE WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "       ELSE COALESCE(c.name, '') END,"
+        "  COALESCE(t.description, '')"
+        " FROM transactions t"
+        " LEFT JOIN categories c ON t.category_id = c.id"
+        " LEFT JOIN categories p ON c.parent_id = p.id"
+        " WHERE t.account_id = ?"
+        " ORDER BY t.date DESC, t.id DESC",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_transactions prepare: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+
+    int capacity = 32;
+    int count = 0;
+    txn_row_t *list = malloc(capacity * sizeof(txn_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            txn_row_t *tmp = realloc(list, capacity * sizeof(txn_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+        list[count].id = sqlite3_column_int64(stmt, 0);
+        list[count].amount_cents = sqlite3_column_int64(stmt, 1);
+        const char *ttype = (const char *)sqlite3_column_text(stmt, 2);
+        if (ttype && strcmp(ttype, "INCOME") == 0)
+            list[count].type = TRANSACTION_INCOME;
+        else if (ttype && strcmp(ttype, "TRANSFER") == 0)
+            list[count].type = TRANSACTION_TRANSFER;
+        else
+            list[count].type = TRANSACTION_EXPENSE;
+        const char *date = (const char *)sqlite3_column_text(stmt, 3);
+        snprintf(list[count].date, sizeof(list[count].date), "%s", date ? date : "");
+        const char *cat = (const char *)sqlite3_column_text(stmt, 4);
+        snprintf(list[count].category_name, sizeof(list[count].category_name), "%s", cat ? cat : "");
+        const char *desc = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(list[count].description, sizeof(list[count].description), "%s", desc ? desc : "");
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    *out = list;
+    return count;
+}
+
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
     const char *type_str;
     switch (txn->type) {

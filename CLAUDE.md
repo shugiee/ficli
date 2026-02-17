@@ -49,6 +49,7 @@ ficli/
 - Header guards use `FICLI_FILENAME_H`
 - Keep functions short and focused
 - Free all allocated memory; no leaks
+- When completing a Status item, always link to its plan document (e.g., `([plan](../.claude/plans/name.md))`)
 
 ## Build & Run
 ```
@@ -70,8 +71,7 @@ make clean    # clean build artifacts
 - [x] Database schema and initialization
 - [x] Basic ncurses UI framework ([plan](../.claude/plans/gentle-strolling-lighthouse.md))
 - [x] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
-- [ ] Add "Node" field to transactions
-- [ ] Transaction list view
+- [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
 - [ ] Support split transactions
 - [ ] Allow editing/deleting transactions
 - [ ] Data import (CSV)
@@ -82,3 +82,4 @@ make clean    # clean build artifacts
 - [ ] Recurring transactions
 - [ ] Show summary information in header
 - [ ] Data export (CSV)
+- [ ] Support sort and filter in transaction list
