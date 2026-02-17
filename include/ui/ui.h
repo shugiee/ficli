@@ -9,6 +9,7 @@ typedef enum {
     SCREEN_CATEGORIES,
     SCREEN_BUDGETS,
     SCREEN_REPORTS,
+    SCREEN_ACCOUNTS,
     SCREEN_COUNT
 } screen_t;
 

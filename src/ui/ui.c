@@ -1,4 +1,5 @@
 #include "ui/ui.h"
+#include "ui/account_list.h"
 #include "ui/form.h"
 #include "ui/txn_list.h"
 
@@ -23,7 +24,8 @@ static const char *menu_labels[SCREEN_COUNT] = {
     "Transactions",
     "Categories",
     "Budgets",
-    "Reports"
+    "Reports",
+    "Accounts"
 };
 
 static struct {
@@ -37,6 +39,7 @@ static struct {
     bool content_focused;
     bool running;
     txn_list_state_t *txn_list;
+    account_list_state_t *account_list;
 } state;
 
 static void ui_create_layout(void) {
@@ -95,6 +98,11 @@ static void ui_draw_content(void) {
             state.txn_list = txn_list_create(state.db);
         if (state.txn_list)
             txn_list_draw(state.txn_list, state.content, state.content_focused);
+    } else if (state.current_screen == SCREEN_ACCOUNTS) {
+        if (!state.account_list)
+            state.account_list = account_list_create(state.db);
+        if (state.account_list)
+            account_list_draw(state.account_list, state.content, state.content_focused);
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
@@ -111,6 +119,8 @@ static void ui_draw_status(void) {
     wbkgd(state.status, COLOR_PAIR(COLOR_STATUS));
     if (state.content_focused && state.current_screen == SCREEN_TRANSACTIONS && state.txn_list) {
         mvwprintw(state.status, 0, 1, "%s", txn_list_status_hint(state.txn_list));
+    } else if (state.content_focused && state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
+        mvwprintw(state.status, 0, 1, "%s", account_list_status_hint(state.account_list));
     } else {
         mvwprintw(state.status, 0, 1, "q:Quit  a:Add  \u2191\u2193:Navigate  Enter:Select");
     }
@@ -139,6 +149,10 @@ static void ui_handle_input(int ch) {
             if (txn_list_handle_input(state.txn_list, ch))
                 return;
         }
+        if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
+            if (account_list_handle_input(state.account_list, ch))
+                return;
+        }
 
         // Fall through for keys not consumed (q, a, KEY_RESIZE)
     }
@@ -158,7 +172,8 @@ static void ui_handle_input(int ch) {
     case '\n':
     case KEY_RIGHT:
         state.current_screen = state.sidebar_sel;
-        if (state.current_screen == SCREEN_TRANSACTIONS)
+        if (state.current_screen == SCREEN_TRANSACTIONS ||
+            state.current_screen == SCREEN_ACCOUNTS)
             state.content_focused = true;
         break;
     case 'a':
@@ -213,6 +228,7 @@ void ui_run(sqlite3 *db) {
     state.content_focused = false;
     state.running = true;
     state.txn_list = NULL;
+    state.account_list = NULL;
 
     ui_create_layout();
     refresh(); // sync stdscr so getch() won't blank the screen
@@ -225,5 +241,7 @@ void ui_run(sqlite3 *db) {
 
     txn_list_destroy(state.txn_list);
     state.txn_list = NULL;
+    account_list_destroy(state.account_list);
+    state.account_list = NULL;
     ui_destroy_layout();
 }

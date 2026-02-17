@@ -45,6 +45,29 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
     return count;
 }
 
+int64_t db_insert_account(sqlite3 *db, const char *name) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db,
+        "INSERT INTO accounts (name) VALUES (?)",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_insert_account prepare: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_insert_account step: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    return sqlite3_last_insert_rowid(db);
+}
+
 int db_get_categories(sqlite3 *db, category_type_t type, category_t **out) {
     *out = NULL;
 

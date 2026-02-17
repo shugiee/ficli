@@ -51,7 +51,7 @@ ficli/
 - Header guards use `FICLI_FILENAME_H`
 - Keep functions short and focused
 - Free all allocated memory; no leaks
-- When completing a Status item, always link to its plan document (e.g., `([plan](../.claude/plans/name.md))`)
+- When completing a Status item, ALWAYS link to its plan document (e.g., `([plan](../.claude/plans/name.md))`)
 
 ## Build & Run
 ```
@@ -74,7 +74,7 @@ make clean    # clean build artifacts
 - [x] Basic ncurses UI framework ([plan](../.claude/plans/gentle-strolling-lighthouse.md))
 - [x] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
 - [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
-- [ ] Add UI to add new accounts
+- [x] Add UI to add new accounts ([plan](../.claude/plans/stateless-wibbling-plum.md))
 - [ ] Support split transactions
 - [ ] Allow editing/deleting transactions
 - [ ] Data import (CSV)
@@ -86,3 +86,7 @@ make clean    # clean build artifacts
 - [ ] Show summary information in header
 - [ ] Data export (CSV)
 - [ ] Support sort and filter in transaction list
+- [ ] Add undo logic
+- [ ] Automatically enter inverse transaction for transfers
+- [ ] Add investment purchases/sales with cost basis tracking
+- [ ] Add CLI arguments for quick actions (e.g., `ficli add -a
