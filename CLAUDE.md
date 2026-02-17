@@ -1,5 +1,7 @@
 # ficli - Personal Finance CLI
 
+> **Start here:** Read [CODEBASE.md](CODEBASE.md) for a detailed map of every file, struct, color pair, and architectural pattern. It saves significant exploration time.
+
 ## Project Overview
 A terminal-based personal finance application for tracking expenses and income. Built as a learning project in C with an ncurses UI.
 
