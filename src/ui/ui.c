@@ -70,13 +70,15 @@ static void ui_draw_sidebar(void) {
     werase(state.sidebar);
     for (int i = 0; i < SCREEN_COUNT; i++) {
         if (i == state.sidebar_sel) {
-            if (state.content_focused)
-                wattron(state.sidebar, A_DIM);
-            wattron(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
-            mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
-            wattroff(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
-            if (state.content_focused)
-                wattroff(state.sidebar, A_DIM);
+            if (state.content_focused) {
+                wattron(state.sidebar, A_DIM | A_REVERSE);
+                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+                wattroff(state.sidebar, A_DIM | A_REVERSE);
+            } else {
+                wattron(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
+                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+                wattroff(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
+            }
         } else {
             mvwprintw(state.sidebar, i + 1, 2, "%-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
         }
@@ -92,7 +94,7 @@ static void ui_draw_content(void) {
         if (!state.txn_list)
             state.txn_list = txn_list_create(state.db);
         if (state.txn_list)
-            txn_list_draw(state.txn_list, state.content);
+            txn_list_draw(state.txn_list, state.content, state.content_focused);
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
@@ -156,7 +158,8 @@ static void ui_handle_input(int ch) {
     case '\n':
     case KEY_RIGHT:
         state.current_screen = state.sidebar_sel;
-        state.content_focused = true;
+        if (state.current_screen == SCREEN_TRANSACTIONS)
+            state.content_focused = true;
         break;
     case 'a':
         form_add_transaction(state.db, state.content);
@@ -212,6 +215,7 @@ void ui_run(sqlite3 *db) {
     state.txn_list = NULL;
 
     ui_create_layout();
+    refresh(); // sync stdscr so getch() won't blank the screen
 
     while (state.running) {
         ui_draw_all();

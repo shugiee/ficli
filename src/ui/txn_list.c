@@ -99,7 +99,7 @@ static void format_amount(int64_t cents, transaction_type_t type, char *buf, int
         snprintf(buf, buflen, "%s.%02ld", formatted, (long)frac);
 }
 
-void txn_list_draw(txn_list_state_t *ls, WINDOW *win) {
+void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     if (ls->dirty) reload(ls);
 
     int h, w;
@@ -186,7 +186,10 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win) {
         snprintf(desc_buf, sizeof(desc_buf), "%-*.*s", desc_w, desc_w, t->description);
 
         bool selected = (idx == ls->cursor);
-        if (selected) wattron(win, A_REVERSE);
+        if (selected) {
+            if (!focused) wattron(win, A_DIM);
+            wattron(win, A_REVERSE);
+        }
 
         // Print the base row (clears it)
         mvwprintw(win, row, 2, "%-10s %-8s %-16.16s",
@@ -209,7 +212,10 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win) {
         // Description
         mvwprintw(win, row, amount_col + 10 + 1, "%s", desc_buf);
 
-        if (selected) wattroff(win, A_REVERSE);
+        if (selected) {
+            wattroff(win, A_REVERSE);
+            if (!focused) wattroff(win, A_DIM);
+        }
     }
 }
 
