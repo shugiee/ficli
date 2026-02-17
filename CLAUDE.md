@@ -9,6 +9,7 @@ A terminal-based personal finance application for tracking expenses and income. 
 - **Build:** Make
 - **Storage:** SQLite (single local file)
 - **Platform:** Linux
+- **Version Control:** Git (use `git diff` to reference changes during discussions)
 
 ## Architecture Decisions
 - Single-binary CLI tool
@@ -69,7 +70,15 @@ make clean    # clean build artifacts
 - [x] Database schema and initialization
 - [x] Basic ncurses UI framework ([plan](../.claude/plans/gentle-strolling-lighthouse.md))
 - [x] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
+- [ ] Add "Node" field to transactions
 - [ ] Transaction list view
-- [ ] Category management
+- [ ] Support split transactions
+- [ ] Allow editing/deleting transactions
+- [ ] Data import (CSV)
 - [ ] Summary/report views
+- [ ] Improve color theme
+- [ ] Category management
 - [ ] Budget tracking
+- [ ] Recurring transactions
+- [ ] Show summary information in header
+- [ ] Data export (CSV)
