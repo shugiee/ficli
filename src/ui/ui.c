@@ -1,4 +1,5 @@
 #include "ui/ui.h"
+#include "ui/form.h"
 
 #include <ncurses.h>
 #include <string.h>
@@ -24,6 +25,7 @@ static struct {
     WINDOW *sidebar;
     WINDOW *content;
     WINDOW *status;
+    sqlite3 *db;
     screen_t current_screen;
     int sidebar_sel;
     bool running;
@@ -87,7 +89,7 @@ static void ui_draw_content(void) {
 static void ui_draw_status(void) {
     werase(state.status);
     wbkgd(state.status, COLOR_PAIR(COLOR_STATUS));
-    mvwprintw(state.status, 0, 1, "q:Quit  \u2191\u2193:Navigate  Enter:Select");
+    mvwprintw(state.status, 0, 1, "q:Quit  a:Add  \u2191\u2193:Navigate  Enter:Select");
     wnoutrefresh(state.status);
 }
 
@@ -116,6 +118,13 @@ static void ui_handle_input(int ch) {
     case KEY_RIGHT:
         state.current_screen = state.sidebar_sel;
         break;
+    case 'a':
+        form_add_transaction(state.db, state.content);
+        touchwin(state.header);
+        touchwin(state.sidebar);
+        touchwin(state.content);
+        touchwin(state.status);
+        break;
     case KEY_RESIZE:
         ui_destroy_layout();
         ui_create_layout();
@@ -134,6 +143,8 @@ void ui_init(void) {
     init_pair(COLOR_HEADER,   COLOR_BLACK, COLOR_CYAN);
     init_pair(COLOR_SELECTED,  COLOR_BLACK, COLOR_WHITE);
     init_pair(COLOR_STATUS,   COLOR_BLACK, COLOR_CYAN);
+    init_pair(10, COLOR_WHITE, COLOR_BLUE);   // COLOR_FORM
+    init_pair(11, COLOR_BLACK, COLOR_CYAN);   // COLOR_FORM_ACTIVE
 }
 
 void ui_cleanup(void) {
@@ -141,7 +152,7 @@ void ui_cleanup(void) {
 }
 
 void ui_run(sqlite3 *db) {
-    (void)db;
+    state.db = db;
 
     state.current_screen = SCREEN_DASHBOARD;
     state.sidebar_sel = 0;

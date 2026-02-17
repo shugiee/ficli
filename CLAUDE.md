@@ -68,7 +68,7 @@ make clean    # clean build artifacts
 - [x] Project scaffolding and build system
 - [x] Database schema and initialization
 - [x] Basic ncurses UI framework ([plan](../.claude/plans/gentle-strolling-lighthouse.md))
-- [ ] Transaction input form
+- [ ] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
 - [ ] Transaction list view
 - [ ] Category management
 - [ ] Summary/report views
