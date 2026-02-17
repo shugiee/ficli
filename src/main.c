@@ -1,10 +1,8 @@
 #include "db/db.h"
 #include "ui/ui.h"
 
-#include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 int main(void) {
     // Build the database path: ~/.local/share/ficli/ficli.db
@@ -23,8 +21,7 @@ int main(void) {
     }
 
     ui_init();
-    ui_draw_welcome();
-    getch();
+    ui_run(db);
     ui_cleanup();
 
     db_close(db);

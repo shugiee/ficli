@@ -3,24 +3,157 @@
 #include <ncurses.h>
 #include <string.h>
 
+#define SIDEBAR_WIDTH 18
+
+enum {
+    COLOR_HEADER = 1,
+    COLOR_SELECTED,
+    COLOR_STATUS
+};
+
+static const char *menu_labels[SCREEN_COUNT] = {
+    "Dashboard",
+    "Transactions",
+    "Categories",
+    "Budgets",
+    "Reports"
+};
+
+static struct {
+    WINDOW *header;
+    WINDOW *sidebar;
+    WINDOW *content;
+    WINDOW *status;
+    screen_t current_screen;
+    int sidebar_sel;
+    bool running;
+} state;
+
+static void ui_create_layout(void) {
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int content_h = rows - 2; // minus header and status
+    int content_w = cols - SIDEBAR_WIDTH;
+
+    state.header  = newwin(1, cols, 0, 0);
+    state.sidebar = newwin(content_h, SIDEBAR_WIDTH, 1, 0);
+    state.content = newwin(content_h, content_w, 1, SIDEBAR_WIDTH);
+    state.status  = newwin(1, cols, rows - 1, 0);
+}
+
+static void ui_destroy_layout(void) {
+    delwin(state.header);
+    delwin(state.sidebar);
+    delwin(state.content);
+    delwin(state.status);
+}
+
+static void ui_draw_header(void) {
+    werase(state.header);
+    wbkgd(state.header, COLOR_PAIR(COLOR_HEADER));
+    mvwprintw(state.header, 0, 1, "ficli");
+    wnoutrefresh(state.header);
+}
+
+static void ui_draw_sidebar(void) {
+    werase(state.sidebar);
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        if (i == state.sidebar_sel) {
+            wattron(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
+            mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+            wattroff(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
+        } else {
+            mvwprintw(state.sidebar, i + 1, 2, "%-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+        }
+    }
+    wnoutrefresh(state.sidebar);
+}
+
+static void ui_draw_content(void) {
+    werase(state.content);
+    box(state.content, 0, 0);
+
+    int h, w;
+    getmaxyx(state.content, h, w);
+
+    const char *title = menu_labels[state.current_screen];
+    int len = (int)strlen(title);
+    mvwprintw(state.content, h / 2, (w - len) / 2, "%s", title);
+
+    wnoutrefresh(state.content);
+}
+
+static void ui_draw_status(void) {
+    werase(state.status);
+    wbkgd(state.status, COLOR_PAIR(COLOR_STATUS));
+    mvwprintw(state.status, 0, 1, "q:Quit  \u2191\u2193:Navigate  Enter:Select");
+    wnoutrefresh(state.status);
+}
+
+static void ui_draw_all(void) {
+    ui_draw_header();
+    ui_draw_sidebar();
+    ui_draw_content();
+    ui_draw_status();
+    doupdate();
+}
+
+static void ui_handle_input(int ch) {
+    switch (ch) {
+    case 'q':
+        state.running = false;
+        break;
+    case KEY_UP:
+        if (state.sidebar_sel > 0)
+            state.sidebar_sel--;
+        break;
+    case KEY_DOWN:
+        if (state.sidebar_sel < SCREEN_COUNT - 1)
+            state.sidebar_sel++;
+        break;
+    case '\n':
+    case KEY_RIGHT:
+        state.current_screen = state.sidebar_sel;
+        break;
+    case KEY_RESIZE:
+        ui_destroy_layout();
+        ui_create_layout();
+        break;
+    }
+}
+
 void ui_init(void) {
     initscr();
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
+
+    start_color();
+    init_pair(COLOR_HEADER,   COLOR_BLACK, COLOR_CYAN);
+    init_pair(COLOR_SELECTED,  COLOR_BLACK, COLOR_WHITE);
+    init_pair(COLOR_STATUS,   COLOR_BLACK, COLOR_CYAN);
 }
 
 void ui_cleanup(void) {
     endwin();
 }
 
-void ui_draw_welcome(void) {
-    int rows, cols;
-    getmaxyx(stdscr, rows, cols);
+void ui_run(sqlite3 *db) {
+    (void)db;
 
-    const char *msg = "ficli - Press any key to exit";
-    int len = (int)strlen(msg);
-    mvprintw(rows / 2, (cols - len) / 2, "%s", msg);
-    refresh();
+    state.current_screen = SCREEN_DASHBOARD;
+    state.sidebar_sel = 0;
+    state.running = true;
+
+    ui_create_layout();
+
+    while (state.running) {
+        ui_draw_all();
+        int ch = getch();
+        ui_handle_input(ch);
+    }
+
+    ui_destroy_layout();
 }
