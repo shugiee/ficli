@@ -3,6 +3,8 @@
 
 #include <ncurses.h>
 #include <string.h>
+#include <termios.h>
+#include <unistd.h>
 
 #define SIDEBAR_WIDTH 18
 
@@ -138,6 +140,12 @@ void ui_init(void) {
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
+
+    // Disable XON/XOFF flow control so Ctrl+S reaches the application
+    struct termios term;
+    tcgetattr(STDIN_FILENO, &term);
+    term.c_iflag &= ~(IXON | IXOFF);
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
 
     start_color();
     init_pair(COLOR_HEADER,   COLOR_BLACK, COLOR_CYAN);

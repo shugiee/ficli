@@ -10,7 +10,7 @@
 #include <time.h>
 
 #define FORM_WIDTH  50
-#define FORM_HEIGHT 17
+#define FORM_HEIGHT 19
 #define LABEL_COL   2
 #define FIELD_COL   16
 #define FIELD_WIDTH 30
@@ -23,6 +23,7 @@ enum {
     FIELD_CATEGORY,
     FIELD_DATE,
     FIELD_DESC,
+    FIELD_SUBMIT,
     FIELD_COUNT
 };
 
@@ -112,7 +113,7 @@ static void form_cleanup_state(form_state_t *fs) {
     }
 }
 
-static const char *field_labels[FIELD_COUNT] = {
+static const char *field_labels[FIELD_SUBMIT] = {
     "Type",
     "Amount",
     "Account",
@@ -138,7 +139,7 @@ static void form_draw(form_state_t *fs) {
     int ww = getmaxx(w);
     mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
 
-    for (int i = 0; i < FIELD_COUNT; i++) {
+    for (int i = 0; i < FIELD_SUBMIT; i++) {
         int row = field_row(i);
         bool active = (i == fs->current_field && !fs->dropdown_open);
 
@@ -188,6 +189,17 @@ static void form_draw(form_state_t *fs) {
             wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
     }
 
+    // Submit button
+    int submit_row = field_row(FIELD_SUBMIT);
+    bool submit_active = (fs->current_field == FIELD_SUBMIT && !fs->dropdown_open);
+    const char *btn = "[ Submit ]";
+    int btn_len = (int)strlen(btn);
+    if (submit_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    mvwprintw(w, submit_row, (ww - btn_len) / 2, "%s", btn);
+    if (submit_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+
     // Error message
     if (fs->error[0] != '\0') {
         wattron(w, A_BOLD);
@@ -196,24 +208,29 @@ static void form_draw(form_state_t *fs) {
     }
 
     // Footer hints
-    mvwprintw(w, FORM_HEIGHT - 1, 2, " F2:Save  Esc:Cancel ");
+    mvwprintw(w, FORM_HEIGHT - 1, 2, " Esc:Cancel ");
 
     // Position cursor on active text field
     if (!fs->dropdown_open) {
-        int row = field_row(fs->current_field);
-        switch (fs->current_field) {
-        case FIELD_AMOUNT:
-            wmove(w, row, FIELD_COL + fs->amount_pos);
-            break;
-        case FIELD_DATE:
-            wmove(w, row, FIELD_COL + fs->date_pos);
-            break;
-        case FIELD_DESC:
-            wmove(w, row, FIELD_COL + fs->desc_pos);
-            break;
-        default:
-            wmove(w, row, FIELD_COL);
-            break;
+        if (fs->current_field == FIELD_SUBMIT) {
+            curs_set(0);
+        } else {
+            curs_set(1);
+            int row = field_row(fs->current_field);
+            switch (fs->current_field) {
+            case FIELD_AMOUNT:
+                wmove(w, row, FIELD_COL + fs->amount_pos);
+                break;
+            case FIELD_DATE:
+                wmove(w, row, FIELD_COL + fs->date_pos);
+                break;
+            case FIELD_DESC:
+                wmove(w, row, FIELD_COL + fs->desc_pos);
+                break;
+            default:
+                wmove(w, row, FIELD_COL);
+                break;
+            }
         }
     }
 
@@ -498,13 +515,6 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
             done = true;
             break;
 
-        case KEY_F(2):
-            if (form_validate_and_save(&fs)) {
-                result = FORM_SAVED;
-                done = true;
-            }
-            break;
-
         case '\t':
         case KEY_DOWN:
             if (fs.current_field < FIELD_COUNT - 1)
@@ -518,26 +528,33 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
             break;
 
         case '\n':
-            if (fs.current_field == FIELD_ACCOUNT ||
-                fs.current_field == FIELD_CATEGORY) {
-                form_open_dropdown(&fs);
-            } else if (fs.current_field == FIELD_DESC) {
-                // Enter on last field = save
+            if (fs.current_field == FIELD_SUBMIT) {
                 if (form_validate_and_save(&fs)) {
                     result = FORM_SAVED;
                     done = true;
                 }
+            } else if (fs.current_field == FIELD_ACCOUNT ||
+                       fs.current_field == FIELD_CATEGORY) {
+                form_open_dropdown(&fs);
             }
             break;
 
         case ' ':
-            if (fs.current_field == FIELD_TYPE) {
+            if (fs.current_field == FIELD_SUBMIT) {
+                if (form_validate_and_save(&fs)) {
+                    result = FORM_SAVED;
+                    done = true;
+                }
+            } else if (fs.current_field == FIELD_TYPE) {
                 fs.txn_type = (fs.txn_type == TRANSACTION_EXPENSE)
                     ? TRANSACTION_INCOME : TRANSACTION_EXPENSE;
                 form_load_categories(&fs);
             } else if (fs.current_field == FIELD_ACCOUNT ||
                        fs.current_field == FIELD_CATEGORY) {
                 form_open_dropdown(&fs);
+            } else if (fs.current_field == FIELD_DESC) {
+                handle_text_input(fs.desc, &fs.desc_pos,
+                                  (int)sizeof(fs.desc), ch, false);
             }
             break;
 
