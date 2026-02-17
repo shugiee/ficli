@@ -208,7 +208,7 @@ static void form_draw(form_state_t *fs) {
     }
 
     // Footer hints
-    mvwprintw(w, FORM_HEIGHT - 1, 2, " Esc:Cancel ");
+    mvwprintw(w, FORM_HEIGHT - 1, 2, " C-s:Save  Esc:Cancel ");
 
     // Position cursor on active text field
     if (!fs->dropdown_open) {
@@ -513,6 +513,13 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
         switch (ch) {
         case 27: // Escape
             done = true;
+            break;
+
+        case 19: // Ctrl+S
+            if (form_validate_and_save(&fs)) {
+                result = FORM_SAVED;
+                done = true;
+            }
             break;
 
         case '\t':
