@@ -23,15 +23,21 @@ A terminal-based personal finance application for tracking expenses and income. 
 - Monthly/yearly summaries
 - Budget tracking per category
 
-## Project Structure (Planned)
+## Project Structure
 ```
 ficli/
   src/
     main.c          # Entry point, ncurses init
     ui/             # UI components (windows, forms, menus)
-    db/             # SQLite database layer
-    models/         # Data structures (transaction, category, budget)
-  include/          # Header files
+    db/             # SQLite database layer (schema, seeding)
+  include/
+    db/db.h         # Database public API
+    ui/ui.h         # UI public API
+    models/         # Data structures
+      account.h     # account_t
+      budget.h      # budget_t
+      category.h    # category_t, category_type_t
+      transaction.h # transaction_t, transaction_type_t
   Makefile
   CLAUDE.md
 ```
@@ -50,9 +56,17 @@ make clean    # clean build artifacts
 ./ficli       # run
 ```
 
+## Database
+- **Path:** `~/.local/share/ficli/ficli.db` (created automatically)
+- **Amounts:** Stored as integers in cents to avoid floating-point issues
+- **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
+- **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
+- **Schema versioning:** `schema_version` table for future migrations (currently version 1)
+- **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
+
 ## Status
-- [ ] Project scaffolding and build system
-- [ ] Database schema and initialization
+- [x] Project scaffolding and build system
+- [x] Database schema and initialization
 - [ ] Basic ncurses UI framework
 - [ ] Transaction input form
 - [ ] Transaction list view
