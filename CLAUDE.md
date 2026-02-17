@@ -74,6 +74,7 @@ make clean    # clean build artifacts
 - [x] Basic ncurses UI framework ([plan](../.claude/plans/gentle-strolling-lighthouse.md))
 - [x] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
 - [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
+- [ ] Add UI to add new accounts
 - [ ] Support split transactions
 - [ ] Allow editing/deleting transactions
 - [ ] Data import (CSV)
