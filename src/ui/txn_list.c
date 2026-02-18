@@ -14,6 +14,7 @@
 #define TYPE_COL_WIDTH 8
 #define CATEGORY_COL_WIDTH 16
 #define AMOUNT_COL_WIDTH 13
+#define PAYEE_COL_WIDTH 16
 // Description column takes remaining width, but enforce a minimum for usability
 #define DESC_COL_MIN_WIDTH 4
 
@@ -191,6 +192,8 @@ static bool matches_filter(const txn_row_t *t, const char *filter) {
         return true;
     if (contains_icase(t->category_name, filter))
         return true;
+    if (contains_icase(t->payee, filter))
+        return true;
     if (contains_icase(t->description, filter))
         return true;
 
@@ -360,7 +363,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     // Amount(13) gap(3) Desc(rest)
     int desc_w = w - 2 - DATE_COL_WIDTH - GAP_WIDTH - TYPE_COL_WIDTH -
                  GAP_WIDTH - CATEGORY_COL_WIDTH - GAP_WIDTH - AMOUNT_COL_WIDTH -
-                 GAP_WIDTH - 2;
+                 GAP_WIDTH - PAYEE_COL_WIDTH - GAP_WIDTH - 2;
     if (desc_w < DESC_COL_MIN_WIDTH)
         desc_w = DESC_COL_MIN_WIDTH;
 
@@ -373,7 +376,8 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     mvwprintw(win, 3, 17, "%-*s", TYPE_COL_WIDTH, "Type");
     mvwprintw(win, 3, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
     mvwprintw(win, 3, 47, "%-*s", AMOUNT_COL_WIDTH, "Amount");
-    mvwprintw(win, 3, 63, "%-*s", desc_w, "Description");
+    mvwprintw(win, 3, 63, "%-*s", PAYEE_COL_WIDTH, "Payee");
+    mvwprintw(win, 3, 82, "%-*s", desc_w, "Description");
     switch (ls->sort_col) {
     case SORT_DATE:
         mvwprintw(win, 3, 6, "%s", ind_str);
@@ -388,7 +392,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         mvwprintw(win, 3, 53, "%s", ind_str);
         break;
     case SORT_DESCRIPTION:
-        mvwprintw(win, 3, 71, "%s", ind_str);
+        mvwprintw(win, 3, 90, "%s", ind_str);
         break;
     default:
         break;
@@ -479,8 +483,12 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         mvwprintw(win, row, amount_col, "%13s", amt);
         wattroff(win, COLOR_PAIR(color));
 
+        // Payee
+        int payee_col = amount_col + AMOUNT_COL_WIDTH + GAP_WIDTH;
+        mvwprintw(win, row, payee_col, "%-16.16s", t->payee);
+
         // Description
-        mvwprintw(win, row, amount_col + 13 + 3, "%s", desc_buf);
+        mvwprintw(win, row, payee_col + PAYEE_COL_WIDTH + GAP_WIDTH, "%s", desc_buf);
 
         if (selected) {
             wattroff(win, A_REVERSE);

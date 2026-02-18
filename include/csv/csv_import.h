@@ -16,6 +16,7 @@ typedef struct {
     char date[11];
     int64_t amount_cents;
     transaction_type_t type;
+    char payee[128];
     char description[256];
     char card_last4[5];
 } csv_row_t;

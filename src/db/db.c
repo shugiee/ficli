@@ -80,6 +80,7 @@ static int create_schema(sqlite3 *db) {
         "    account_id INTEGER NOT NULL,"
         "    category_id INTEGER,"
         "    date TEXT NOT NULL,"
+        "    payee TEXT,"
         "    description TEXT,"
         "    transfer_id INTEGER,"
         "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
@@ -108,7 +109,7 @@ static int create_schema(sqlite3 *db) {
 
 static int seed_defaults(sqlite3 *db) {
     const char *seed_sql =
-        "INSERT INTO schema_version (version) VALUES (2);"
+        "INSERT INTO schema_version (version) VALUES (4);"
 
         "INSERT INTO accounts (name, type) VALUES ('Cash', 'CASH');"
 
@@ -153,10 +154,40 @@ static int migrate_v1_to_v2(sqlite3 *db) {
     return 0;
 }
 
+static int migrate_v2_to_v3(sqlite3 *db) {
+    // card_last4 may already exist if it was added to the schema DDL before
+    // the migration was introduced; ignore "duplicate column" errors.
+    sqlite3_exec(db, "ALTER TABLE accounts ADD COLUMN card_last4 TEXT;",
+                 NULL, NULL, NULL);
+    if (exec_sql(db, "INSERT INTO schema_version (version) VALUES (3);") != 0) {
+        fprintf(stderr, "Migration v2->v3 failed\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int migrate_v3_to_v4(sqlite3 *db) {
+    if (exec_sql(db,
+            "ALTER TABLE transactions ADD COLUMN payee TEXT;"
+            "INSERT INTO schema_version (version) VALUES (4);") != 0) {
+        fprintf(stderr, "Migration v3->v4 failed\n");
+        return -1;
+    }
+    return 0;
+}
+
 static int run_migrations(sqlite3 *db) {
     int ver = get_schema_version(db);
     if (ver < 2) {
         if (migrate_v1_to_v2(db) != 0) return -1;
+        ver = 2;
+    }
+    if (ver < 3) {
+        if (migrate_v2_to_v3(db) != 0) return -1;
+        ver = 3;
+    }
+    if (ver < 4) {
+        if (migrate_v3_to_v4(db) != 0) return -1;
     }
     return 0;
 }

@@ -11,7 +11,7 @@
 #include <time.h>
 
 #define FORM_WIDTH 50
-#define FORM_HEIGHT 19
+#define FORM_HEIGHT 21
 #define LABEL_COL 2
 #define FIELD_COL 16
 #define FIELD_WIDTH 30
@@ -23,6 +23,7 @@ enum {
     FIELD_ACCOUNT,
     FIELD_CATEGORY,
     FIELD_DATE,
+    FIELD_PAYEE,
     FIELD_DESC,
     FIELD_SUBMIT,
     FIELD_COUNT
@@ -49,6 +50,8 @@ typedef struct {
     int amount_pos;
     char date[11];
     int date_pos;
+    char payee[128];
+    int payee_pos;
     char desc[256];
     int desc_pos;
 
@@ -124,6 +127,10 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
             snprintf(fs->date, sizeof(fs->date), "%s", txn->date);
             fs->date_pos = (int)strlen(fs->date);
         }
+        if (txn->payee[0] != '\0') {
+            snprintf(fs->payee, sizeof(fs->payee), "%s", txn->payee);
+            fs->payee_pos = (int)strlen(fs->payee);
+        }
         if (txn->description[0] != '\0') {
             snprintf(fs->desc, sizeof(fs->desc), "%s", txn->description);
             fs->desc_pos = (int)strlen(fs->desc);
@@ -160,7 +167,7 @@ static void form_cleanup_state(form_state_t *fs) {
 }
 
 static const char *field_labels[FIELD_SUBMIT] = {
-    "Type", "Amount", "Account", "Category", "Date", "Description"};
+    "Type", "Amount", "Account", "Category", "Date", "Payee", "Description"};
 
 static int field_row(int field) {
     // Row within form window for each field (after title and border)
@@ -226,6 +233,9 @@ static void form_draw(form_state_t *fs) {
         case FIELD_DATE:
             mvwprintw(w, row, FIELD_COL, "%s", fs->date);
             break;
+        case FIELD_PAYEE:
+            mvwprintw(w, row, FIELD_COL, "%s", fs->payee);
+            break;
         case FIELD_DESC:
             mvwprintw(w, row, FIELD_COL, "%s", fs->desc);
             break;
@@ -270,6 +280,9 @@ static void form_draw(form_state_t *fs) {
                 break;
             case FIELD_DATE:
                 wmove(w, row, FIELD_COL + fs->date_pos);
+                break;
+            case FIELD_PAYEE:
+                wmove(w, row, FIELD_COL + fs->payee_pos);
                 break;
             case FIELD_DESC:
                 wmove(w, row, FIELD_COL + fs->desc_pos);
@@ -476,6 +489,7 @@ static bool form_validate_and_save(form_state_t *fs) {
     if (fs->txn_type != TRANSACTION_TRANSFER && fs->category_count > 0)
         txn.category_id = fs->categories[fs->category_sel].id;
     snprintf(txn.date, sizeof(txn.date), "%s", fs->date);
+    snprintf(txn.payee, sizeof(txn.payee), "%s", fs->payee);
     snprintf(txn.description, sizeof(txn.description), "%s", fs->desc);
 
     if (fs->is_edit) {
@@ -668,6 +682,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                 if (!(fs.current_field == FIELD_CATEGORY &&
                       fs.txn_type == TRANSACTION_TRANSFER))
                     form_open_dropdown(&fs);
+            } else if (fs.current_field == FIELD_PAYEE) {
+                handle_text_input(fs.payee, &fs.payee_pos, (int)sizeof(fs.payee),
+                                  ch, false);
             } else if (fs.current_field == FIELD_DESC) {
                 handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
                                   ch, false);
@@ -683,6 +700,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_PAYEE) {
+                handle_text_input(fs.payee, &fs.payee_pos,
+                                  (int)sizeof(fs.payee), ch, false);
             } else if (fs.current_field == FIELD_DESC) {
                 handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
                                   ch, false);
@@ -698,6 +718,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_PAYEE) {
+                handle_text_input(fs.payee, &fs.payee_pos,
+                                  (int)sizeof(fs.payee), ch, false);
             } else if (fs.current_field == FIELD_DESC) {
                 handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
                                   ch, false);
@@ -715,6 +738,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_PAYEE) {
+                handle_text_input(fs.payee, &fs.payee_pos,
+                                  (int)sizeof(fs.payee), ch, false);
             } else if (fs.current_field == FIELD_DESC) {
                 handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
                                   ch, false);

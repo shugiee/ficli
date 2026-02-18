@@ -175,6 +175,7 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
         "SELECT t.id, t.amount_cents, t.type, t.date,"
         "  CASE WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
         "       ELSE COALESCE(c.name, '') END,"
+        "  COALESCE(t.payee, ''),"
         "  COALESCE(t.description, '')"
         " FROM transactions t"
         " LEFT JOIN categories c ON t.category_id = c.id"
@@ -216,7 +217,9 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
         snprintf(list[count].date, sizeof(list[count].date), "%s", date ? date : "");
         const char *cat = (const char *)sqlite3_column_text(stmt, 4);
         snprintf(list[count].category_name, sizeof(list[count].category_name), "%s", cat ? cat : "");
-        const char *desc = (const char *)sqlite3_column_text(stmt, 5);
+        const char *payee = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(list[count].payee, sizeof(list[count].payee), "%s", payee ? payee : "");
+        const char *desc = (const char *)sqlite3_column_text(stmt, 6);
         snprintf(list[count].description, sizeof(list[count].description), "%s", desc ? desc : "");
         count++;
     }
@@ -231,8 +234,8 @@ int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "INSERT INTO transactions (amount_cents, type, account_id, category_id, date, description)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO transactions (amount_cents, type, account_id, category_id, date, payee, description)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_insert_transaction prepare: %s\n", sqlite3_errmsg(db));
@@ -247,10 +250,14 @@ int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
     else
         sqlite3_bind_null(stmt, 4);
     sqlite3_bind_text(stmt, 5, txn->date, -1, SQLITE_STATIC);
-    if (txn->description[0] != '\0')
-        sqlite3_bind_text(stmt, 6, txn->description, -1, SQLITE_STATIC);
+    if (txn->payee[0] != '\0')
+        sqlite3_bind_text(stmt, 6, txn->payee, -1, SQLITE_STATIC);
     else
         sqlite3_bind_null(stmt, 6);
+    if (txn->description[0] != '\0')
+        sqlite3_bind_text(stmt, 7, txn->description, -1, SQLITE_STATIC);
+    else
+        sqlite3_bind_null(stmt, 7);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -268,7 +275,7 @@ int db_get_transaction_by_id(sqlite3 *db, int txn_id, transaction_t *out) {
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "SELECT id, amount_cents, type, account_id, category_id, date, description, transfer_id"
+        "SELECT id, amount_cents, type, account_id, category_id, date, payee, description, transfer_id"
         " FROM transactions WHERE id = ?",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
@@ -291,12 +298,14 @@ int db_get_transaction_by_id(sqlite3 *db, int txn_id, transaction_t *out) {
             out->category_id = sqlite3_column_int64(stmt, 4);
         const char *date = (const char *)sqlite3_column_text(stmt, 5);
         snprintf(out->date, sizeof(out->date), "%s", date ? date : "");
-        const char *desc = (const char *)sqlite3_column_text(stmt, 6);
+        const char *payee = (const char *)sqlite3_column_text(stmt, 6);
+        snprintf(out->payee, sizeof(out->payee), "%s", payee ? payee : "");
+        const char *desc = (const char *)sqlite3_column_text(stmt, 7);
         snprintf(out->description, sizeof(out->description), "%s", desc ? desc : "");
-        if (sqlite3_column_type(stmt, 7) == SQLITE_NULL)
+        if (sqlite3_column_type(stmt, 8) == SQLITE_NULL)
             out->transfer_id = 0;
         else
-            out->transfer_id = sqlite3_column_int64(stmt, 7);
+            out->transfer_id = sqlite3_column_int64(stmt, 8);
         out->created_at = 0;
         sqlite3_finalize(stmt);
         return 0;
@@ -415,7 +424,7 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
 
     rc = sqlite3_prepare_v2(db,
         "UPDATE transactions"
-        " SET amount_cents = ?, type = ?, account_id = ?, category_id = ?, date = ?, description = ?, transfer_id = ?"
+        " SET amount_cents = ?, type = ?, account_id = ?, category_id = ?, date = ?, payee = ?, description = ?, transfer_id = ?"
         " WHERE id = ?",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
@@ -431,15 +440,19 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
     else
         sqlite3_bind_null(stmt, 4);
     sqlite3_bind_text(stmt, 5, normalized.date, -1, SQLITE_STATIC);
-    if (normalized.description[0] != '\0')
-        sqlite3_bind_text(stmt, 6, normalized.description, -1, SQLITE_STATIC);
+    if (normalized.payee[0] != '\0')
+        sqlite3_bind_text(stmt, 6, normalized.payee, -1, SQLITE_STATIC);
     else
         sqlite3_bind_null(stmt, 6);
-    if (normalized.transfer_id > 0)
-        sqlite3_bind_int64(stmt, 7, normalized.transfer_id);
+    if (normalized.description[0] != '\0')
+        sqlite3_bind_text(stmt, 7, normalized.description, -1, SQLITE_STATIC);
     else
         sqlite3_bind_null(stmt, 7);
-    sqlite3_bind_int64(stmt, 8, normalized.id);
+    if (normalized.transfer_id > 0)
+        sqlite3_bind_int64(stmt, 8, normalized.transfer_id);
+    else
+        sqlite3_bind_null(stmt, 8);
+    sqlite3_bind_int64(stmt, 9, normalized.id);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -489,7 +502,7 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
         } else if (count > 1) {
             rc = sqlite3_prepare_v2(db,
                 "UPDATE transactions"
-                " SET amount_cents = ?, date = ?, description = ?, type = 'TRANSFER', category_id = NULL, account_id = ?"
+                " SET amount_cents = ?, date = ?, payee = ?, description = ?, type = 'TRANSFER', category_id = NULL, account_id = ?"
                 " WHERE transfer_id = ? AND id != ?",
                 -1, &stmt, NULL);
             if (rc != SQLITE_OK) {
@@ -498,13 +511,17 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
             }
             sqlite3_bind_int64(stmt, 1, normalized.amount_cents);
             sqlite3_bind_text(stmt, 2, normalized.date, -1, SQLITE_STATIC);
-            if (normalized.description[0] != '\0')
-                sqlite3_bind_text(stmt, 3, normalized.description, -1, SQLITE_STATIC);
+            if (normalized.payee[0] != '\0')
+                sqlite3_bind_text(stmt, 3, normalized.payee, -1, SQLITE_STATIC);
             else
                 sqlite3_bind_null(stmt, 3);
-            sqlite3_bind_int64(stmt, 4, old_account_id);
-            sqlite3_bind_int64(stmt, 5, normalized.transfer_id);
-            sqlite3_bind_int64(stmt, 6, normalized.id);
+            if (normalized.description[0] != '\0')
+                sqlite3_bind_text(stmt, 4, normalized.description, -1, SQLITE_STATIC);
+            else
+                sqlite3_bind_null(stmt, 4);
+            sqlite3_bind_int64(stmt, 5, old_account_id);
+            sqlite3_bind_int64(stmt, 6, normalized.transfer_id);
+            sqlite3_bind_int64(stmt, 7, normalized.id);
             rc = sqlite3_step(stmt);
             sqlite3_finalize(stmt);
             stmt = NULL;

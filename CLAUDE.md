@@ -86,6 +86,7 @@ make clean    # clean build artifacts
 - [x] Add card number to CC accounts
 - [x] Data import (CSV) ([plan](../.claude/plans/csv-import.md))
 - [ ] Add a Payee field to transactions
+- [ ] Prevent duplicate transactions when importing CSVs
 - [ ] Allow toggling light/dark mode
 - [ ] Add "Submit" button when adding an account
 - [ ] Show new account in Transactions view

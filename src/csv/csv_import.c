@@ -207,7 +207,7 @@ csv_parse_result_t csv_parse_file(const char *path) {
 
     int col_date = -1, col_card = -1;
     int col_debit = -1, col_credit = -1;
-    int col_amount = -1, col_txn_type = -1, col_desc = -1;
+    int col_amount = -1, col_txn_type = -1, col_desc = -1, col_txn_desc = -1;
 
     for (int i = 0; i < ncols; i++) {
         char norm[128];
@@ -230,6 +230,9 @@ csv_parse_result_t csv_parse_file(const char *path) {
                    (strcmp(norm, "transaction type") == 0 ||
                     strcmp(norm, "type") == 0)) {
             col_txn_type = i;
+        } else if (col_txn_desc < 0 &&
+                   strcmp(norm, "transaction description") == 0) {
+            col_txn_desc = i;
         } else if (col_desc < 0 &&
                    (strcmp(norm, "description") == 0 ||
                     strcmp(norm, "memo") == 0 || strcmp(norm, "payee") == 0 ||
@@ -293,10 +296,16 @@ csv_parse_result_t csv_parse_file(const char *path) {
             continue;
         }
 
-        // Description
-        if (col_desc >= 0 && col_desc < rnc)
-            snprintf(row->description, sizeof(row->description), "%s",
-                     row_fields[col_desc]);
+        // Payee: CC uses "Description" column; checking/savings uses "Transaction Description"
+        if (result.type == CSV_TYPE_CREDIT_CARD) {
+            if (col_desc >= 0 && col_desc < rnc)
+                snprintf(row->payee, sizeof(row->payee), "%s", row_fields[col_desc]);
+        } else {
+            if (col_txn_desc >= 0 && col_txn_desc < rnc)
+                snprintf(row->payee, sizeof(row->payee), "%s", row_fields[col_txn_desc]);
+            else if (col_desc >= 0 && col_desc < rnc)
+                snprintf(row->payee, sizeof(row->payee), "%s", row_fields[col_desc]);
+        }
 
         if (result.type == CSV_TYPE_CREDIT_CARD) {
             // Card last 4
@@ -404,7 +413,7 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
         txn.type = row->type;
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
-        snprintf(txn.description, sizeof(txn.description), "%s", row->description);
+        snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
 
         if (db_insert_transaction(db, &txn) < 0) {
             free(accounts);
@@ -429,7 +438,7 @@ int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
         txn.type = row->type;
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
-        snprintf(txn.description, sizeof(txn.description), "%s", row->description);
+        snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
 
         if (db_insert_transaction(db, &txn) < 0)
             return -1;

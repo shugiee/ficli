@@ -37,6 +37,7 @@ typedef struct {
     transaction_type_t type;
     char date[11];
     char category_name[64];  // "Parent:Child" via JOIN, or ""
+    char payee[128];
     char description[256];
 } txn_row_t;
 
