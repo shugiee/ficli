@@ -83,23 +83,28 @@ make clean    # clean build artifacts
 - [x] Show keyboard commands when user hits ?
 - [x] Align table header row
 - [x] Improve color theme
-- [ ] Add card number to CC accounts
-- [ ] Allow editing accounts
-- [ ] Data import (CSV)
-- [ ] Handle window resizing
+- [x] Add card number to CC accounts
+- [x] Data import (CSV) ([plan](../.claude/plans/csv-import.md))
+- [ ] Add a Payee field to transactions
 - [ ] Allow toggling light/dark mode
+- [ ] Add "Submit" button when adding an account
+- [ ] Show new account in Transactions view
 - [ ] Show summary information in header
 - [ ] Summary/report views
+- [ ] Allow editing accounts
 - [ ] Show chart of account balance over time
+- [ ] Allow "reflection date" for transactions to let user control where they're bucketed for reports and budgets
 - [ ] Category management
 - [ ] Budget tracking
 - [ ] Fix error UI when adding an account with a name conflict
+- [ ] Support CSV imports for investment accounts
 - [ ] Data export (CSV)
 - [ ] Support split transactions
 - [ ] Add row indices to transaction list
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
+- [ ] Handle window resizing
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption
 - [ ] Support auto-categorization

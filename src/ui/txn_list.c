@@ -644,3 +644,9 @@ void txn_list_mark_dirty(txn_list_state_t *ls) {
     if (ls)
         ls->dirty = true;
 }
+
+int64_t txn_list_get_current_account_id(const txn_list_state_t *ls) {
+    if (!ls || !ls->accounts || ls->account_count == 0)
+        return 0;
+    return ls->accounts[ls->account_sel].id;
+}

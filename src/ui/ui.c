@@ -2,6 +2,7 @@
 #include "ui/account_list.h"
 #include "ui/colors.h"
 #include "ui/form.h"
+#include "ui/import_dialog.h"
 #include "ui/txn_list.h"
 
 #include <locale.h>
@@ -40,6 +41,7 @@ static const help_row_t help_rows[] = {
     {NULL, "Global"},
     {"q", "Quit"},
     {"a", "Add transaction"},
+    {"i", "Import CSV"},
     {"?", "This help"},
 
     {"", ""},
@@ -181,7 +183,7 @@ static void ui_draw_status(void) {
                   account_list_status_hint(state.account_list));
     } else {
         mvwprintw(state.status, 0, 1,
-                  "q:Quit  a:Add  ?:Help  \u2191\u2193:Navigate  Enter:Select");
+                  "q:Quit  a:Add  i:Import  ?:Help  \u2191\u2193:Navigate  Enter:Select");
     }
     wnoutrefresh(state.status);
 }
@@ -351,6 +353,17 @@ static void ui_handle_input(int ch) {
         touchwin(state.content);
         touchwin(state.status);
         break;
+    case 'i': {
+        int64_t acct_id = state.txn_list
+            ? txn_list_get_current_account_id(state.txn_list) : 0;
+        int n = import_dialog(state.content, state.db, acct_id);
+        if (n > 0 && state.txn_list)
+            txn_list_mark_dirty(state.txn_list);
+        touchwin(state.header);
+        touchwin(state.sidebar);
+        touchwin(state.content);
+        touchwin(state.status);
+    } break;
     case '?':
         ui_show_help();
         break;

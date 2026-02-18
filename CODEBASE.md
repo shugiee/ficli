@@ -10,6 +10,13 @@ Quick-reference for the current state of every file, its role, and key implement
 |------|---------|
 | `src/main.c` (29 lines) | Builds DB path (`~/.local/share/ficli/ficli.db`), calls `db_init()`, `ui_init()`, `ui_run()`, `ui_cleanup()`, `db_close()`. No business logic here. |
 
+### CSV Import Layer (`csv/`)
+
+| File | Purpose |
+|------|---------|
+| `include/csv/csv_import.h` | Types (`csv_type_t`, `csv_row_t`, `csv_parse_result_t`) and API (`csv_parse_file`, `csv_parse_result_free`, `csv_import_credit_card`, `csv_import_checking`) |
+| `src/csv/csv_import.c` | Parses CSV files into `csv_parse_result_t`. Detects CC vs checking/savings by presence of a "card" column. Helpers: `csv_parse_line` (quoted-field parser), `normalize_col` (lowercase+trim), `normalize_date` (MM/DD/YYYY or YYYY-MM-DD → YYYY-MM-DD), `parse_csv_amount` (strips $, commas, handles negatives/parens), `extract_last4`. Import functions call `db_insert_transaction()` for each row; CC import matches `card_last4` to CREDIT_CARD accounts. |
+
 ### Database Layer (`db/`)
 
 | File | Purpose |
@@ -37,8 +44,10 @@ Quick-reference for the current state of every file, its role, and key implement
 | `src/ui/ui.c` (226 lines) | Main UI loop. Static `state` struct holds windows, db handle, screen selection, focus flag, txn_list pointer. Manages layout (header/sidebar/content/status), drawing, and input dispatch. |
 | `include/ui/form.h` | `form_add_transaction()` returns `FORM_SAVED` or `FORM_CANCELLED` |
 | `src/ui/form.c` (620 lines) | Modal transaction form. Centered overlay on content window. Fields: Type (toggle), Amount (digits+dot), Account (dropdown), Category (dropdown, reloads on type change), Date (YYYY-MM-DD, defaults today), Description (free text), Submit button. Dropdowns scroll with MAX_DROP=5 visible. Saves via `db_insert_transaction()`. |
-| `include/ui/txn_list.h` | Opaque `txn_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty |
-| `src/ui/txn_list.c` (224 lines) | Scrollable transaction list per account. Account tabs (1-9 switching), column headers, colored amounts (red=expense, green=income), cursor with A_REVERSE, auto-scroll. Lazy-loads data on dirty flag. |
+| `include/ui/txn_list.h` | Opaque `txn_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty/get_current_account_id |
+| `src/ui/txn_list.c` | Scrollable transaction list per account. Account tabs (1-9 switching), column headers, colored amounts (red=expense, green=income), cursor with A_REVERSE, auto-scroll. Lazy-loads data on dirty flag. |
+| `include/ui/import_dialog.h` | `import_dialog(parent, db, current_account_id)` — returns imported count or -1 if cancelled |
+| `src/ui/import_dialog.c` | Multi-stage modal dialog (56×20). Stages: PATH (text input + parse), CONFIRM_CC (card list with match info and import/skip counts), SELECT_ACCT (j/k scrollable account list), RESULT (final counts), ERROR (error message). |
 
 ### Build
 
