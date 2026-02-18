@@ -1,20 +1,19 @@
 #include "ui/txn_list.h"
-#include "ui/colors.h"
 #include "db/query.h"
 #include "models/account.h"
+#include "ui/colors.h"
 #include "ui/form.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-
 #define GAP_WIDTH 3
 #define DATE_COL_WIDTH 12
 #define TYPE_COL_WIDTH 8
-#define CATEGORY_COL_WIDTH 16
+#define CATEGORY_COL_WIDTH 20
 #define AMOUNT_COL_WIDTH 13
-#define PAYEE_COL_WIDTH 16
+#define PAYEE_COL_WIDTH 30
 // Description column takes remaining width, but enforce a minimum for usability
 #define DESC_COL_MIN_WIDTH 4
 
@@ -29,11 +28,12 @@
 
 typedef enum {
     SORT_DATE,
-    SORT_AMOUNT,
-    SORT_CATEGORY,
-    SORT_DESCRIPTION,
     SORT_TYPE,
-    SORT_COUNT
+    SORT_CATEGORY,
+    SORT_AMOUNT,
+    SORT_PAYEE,
+    SORT_DESCRIPTION,
+    SORT_COUNT,
 } sort_col_t;
 
 struct txn_list_state {
@@ -359,8 +359,8 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     }
 
     // -- Column headers (row 3) with sort direction indicator --
-    // Column layout: Date(12) gap(3) Type(8) gap(3) Category(16) gap(3)
-    // Amount(13) gap(3) Desc(rest)
+    // Column layout: Date(12) gap(3) Type(8) gap(3) Category(20) gap(3)
+    // Amount(13) gap(3) Payee(30) gap(3) Desc(rest)
     int desc_w = w - 2 - DATE_COL_WIDTH - GAP_WIDTH - TYPE_COL_WIDTH -
                  GAP_WIDTH - CATEGORY_COL_WIDTH - GAP_WIDTH - AMOUNT_COL_WIDTH -
                  GAP_WIDTH - PAYEE_COL_WIDTH - GAP_WIDTH - 2;
@@ -375,24 +375,27 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     mvwprintw(win, 3, 2, "%-*s", DATE_COL_WIDTH, "Date");
     mvwprintw(win, 3, 17, "%-*s", TYPE_COL_WIDTH, "Type");
     mvwprintw(win, 3, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
-    mvwprintw(win, 3, 47, "%-*s", AMOUNT_COL_WIDTH, "Amount");
-    mvwprintw(win, 3, 63, "%-*s", PAYEE_COL_WIDTH, "Payee");
-    mvwprintw(win, 3, 82, "%-*s", desc_w, "Description");
+    mvwprintw(win, 3, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
+    mvwprintw(win, 3, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
+    mvwprintw(win, 3, 100, "%-*s", desc_w, "Description");
     switch (ls->sort_col) {
     case SORT_DATE:
-        mvwprintw(win, 3, 6, "%s", ind_str);
+        mvwprintw(win, 3, 7, "%s", ind_str);
         break;
     case SORT_TYPE:
-        mvwprintw(win, 3, 21, "%s", ind_str);
+        mvwprintw(win, 3, 22, "%s", ind_str);
         break;
     case SORT_CATEGORY:
-        mvwprintw(win, 3, 36, "%s", ind_str);
+        mvwprintw(win, 3, 37, "%s", ind_str);
         break;
     case SORT_AMOUNT:
-        mvwprintw(win, 3, 53, "%s", ind_str);
+        mvwprintw(win, 3, 54, "%s", ind_str);
+        break;
+    case SORT_PAYEE:
+        mvwprintw(win, 3, 69, "%s", ind_str);
         break;
     case SORT_DESCRIPTION:
-        mvwprintw(win, 3, 90, "%s", ind_str);
+        mvwprintw(win, 3, 108, "%s", ind_str);
         break;
     default:
         break;
@@ -472,23 +475,26 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         }
 
         // Print the base row (clears it)
-        mvwprintw(win, row, 2, "%-12s   %-8s   %-16.16s", t->date, type_str,
-                  t->category_name);
+        mvwprintw(win, row, 2, "%-*s   %-*s   %-*.*s   ", DATE_COL_WIDTH,
+                  t->date, TYPE_COL_WIDTH, type_str, CATEGORY_COL_WIDTH,
+                  CATEGORY_COL_WIDTH, t->category_name);
 
         // Amount with color
-        int amount_col = 2 + 12 + 3 + 8 + 3 + 16 + 3;
+        int amount_col = 2 + DATE_COL_WIDTH + GAP_WIDTH + TYPE_COL_WIDTH +
+                         GAP_WIDTH + CATEGORY_COL_WIDTH + GAP_WIDTH;
         int color =
             (t->type == TRANSACTION_EXPENSE) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(color));
-        mvwprintw(win, row, amount_col, "%13s", amt);
+        mvwprintw(win, row, amount_col, "%*s", AMOUNT_COL_WIDTH, amt);
         wattroff(win, COLOR_PAIR(color));
 
         // Payee
-        int payee_col = amount_col + AMOUNT_COL_WIDTH + GAP_WIDTH;
-        mvwprintw(win, row, payee_col, "%-16.16s", t->payee);
+        int payee_col = amount_col + AMOUNT_COL_WIDTH;
+        mvwprintw(win, row, payee_col, "%-*.*s", PAYEE_COL_WIDTH,
+                  PAYEE_COL_WIDTH, t->payee);
 
         // Description
-        mvwprintw(win, row, payee_col + PAYEE_COL_WIDTH + GAP_WIDTH, "%s", desc_buf);
+        mvwprintw(win, row, payee_col + PAYEE_COL_WIDTH, "%s", desc_buf);
 
         if (selected) {
             wattroff(win, A_REVERSE);

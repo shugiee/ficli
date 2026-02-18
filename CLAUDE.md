@@ -85,6 +85,7 @@ make clean    # clean build artifacts
 - [x] Improve color theme
 - [x] Add card number to CC accounts
 - [x] Data import (CSV) ([plan](../.claude/plans/csv-import.md))
+- [ ] Make `s` for sort select columns in the correct order
 - [ ] Add a Payee field to transactions
 - [ ] Prevent duplicate transactions when importing CSVs
 - [ ] Allow toggling light/dark mode
