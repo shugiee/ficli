@@ -315,21 +315,27 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     }
 
     // -- Column headers (row 3) with sort direction indicator --
-    // Column layout: Date(10) gap(1) Type(8) gap(1) Category(16) gap(1) Amount(10) gap(1) Desc(rest)
-    int desc_w = w - 2 - 10 - 1 - 8 - 1 - 16 - 1 - 10 - 1;
+    // Column layout: Date(12) gap(3) Type(8) gap(3) Category(16) gap(3) Amount(10) gap(3) Desc(rest)
+    int desc_w = w - 2 - 12 - 3 - 8 - 3 - 16 - 3 - 10 - 3;
     if (desc_w < 4) desc_w = 4;
 
+    // Print each header at its exact column to avoid UTF-8 byte-vs-display-width padding issues,
+    // then overlay the sort indicator right after the active label text.
     const char *ind_str = ls->sort_asc ? "\u2191" : "\u2193";
-    char date_hdr[16], type_hdr[12], cat_hdr[20], amt_hdr[14], desc_hdr[32];
-    snprintf(date_hdr, sizeof(date_hdr), "Date%s",        ls->sort_col == SORT_DATE        ? ind_str : "");
-    snprintf(type_hdr, sizeof(type_hdr), "Type%s",        ls->sort_col == SORT_TYPE        ? ind_str : "");
-    snprintf(cat_hdr,  sizeof(cat_hdr),  "Category%s",    ls->sort_col == SORT_CATEGORY    ? ind_str : "");
-    snprintf(amt_hdr,  sizeof(amt_hdr),  "Amount%s",      ls->sort_col == SORT_AMOUNT      ? ind_str : "");
-    snprintf(desc_hdr, sizeof(desc_hdr), "Description%s", ls->sort_col == SORT_DESCRIPTION ? ind_str : "");
-
     wattron(win, A_BOLD);
-    mvwprintw(win, 3, 2, "%-10s %-8s %-16s %10s %-*s",
-              date_hdr, type_hdr, cat_hdr, amt_hdr, desc_w, desc_hdr);
+    mvwprintw(win, 3,  2, "%-12s", "Date");
+    mvwprintw(win, 3, 17, "%-8s",  "Type");
+    mvwprintw(win, 3, 28, "%-16s", "Category");
+    mvwprintw(win, 3, 47, "%-10s", "Amount");
+    mvwprintw(win, 3, 60, "%-*s",  desc_w, "Description");
+    switch (ls->sort_col) {
+    case SORT_DATE:        mvwprintw(win, 3,  6, "%s", ind_str); break;
+    case SORT_TYPE:        mvwprintw(win, 3, 21, "%s", ind_str); break;
+    case SORT_CATEGORY:    mvwprintw(win, 3, 36, "%s", ind_str); break;
+    case SORT_AMOUNT:      mvwprintw(win, 3, 53, "%s", ind_str); break;
+    case SORT_DESCRIPTION: mvwprintw(win, 3, 71, "%s", ind_str); break;
+    default: break;
+    }
     wattroff(win, A_BOLD);
 
     // -- Horizontal rule (row 4) --
@@ -390,18 +396,18 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         }
 
         // Print the base row (clears it)
-        mvwprintw(win, row, 2, "%-10s %-8s %-16.16s",
+        mvwprintw(win, row, 2, "%-12s   %-8s   %-16.16s",
                   t->date, type_str, t->category_name);
 
         // Amount with color
-        int amount_col = 2 + 10 + 1 + 8 + 1 + 16 + 1;
+        int amount_col = 2 + 12 + 3 + 8 + 3 + 16 + 3;
         int color = (t->type == TRANSACTION_EXPENSE) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(color));
         mvwprintw(win, row, amount_col, "%10s", amt);
         wattroff(win, COLOR_PAIR(color));
 
         // Description
-        mvwprintw(win, row, amount_col + 10 + 1, "%s", desc_buf);
+        mvwprintw(win, row, amount_col + 10 + 3, "%s", desc_buf);
 
         if (selected) {
             wattroff(win, A_REVERSE);

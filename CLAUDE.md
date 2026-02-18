@@ -85,6 +85,7 @@ make clean    # clean build artifacts
 - [ ] Data import (CSV)
 - [ ] Summary/report views
 - [ ] Improve color theme
+- [ ] Show chart of account balance over time
 - [ ] Category management
 - [ ] Budget tracking
 - [ ] Fix error UI when adding an account with a name conflict
