@@ -4,12 +4,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *account_type_db_strings[] = {
+    "CASH", "CHECKING", "SAVINGS", "CREDIT_CARD", "PHYSICAL_ASSET", "INVESTMENT"
+};
+
+static account_type_t account_type_from_str(const char *s) {
+    if (s) {
+        for (int i = 0; i < ACCOUNT_TYPE_COUNT; i++) {
+            if (strcmp(s, account_type_db_strings[i]) == 0)
+                return (account_type_t)i;
+        }
+    }
+    return ACCOUNT_CASH;
+}
+
 int db_get_accounts(sqlite3 *db, account_t **out) {
     *out = NULL;
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "SELECT id, name FROM accounts ORDER BY name", -1, &stmt, NULL);
+        "SELECT id, name, type FROM accounts ORDER BY name", -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_accounts prepare: %s\n", sqlite3_errmsg(db));
         return -1;
@@ -37,6 +51,8 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
         list[count].id = sqlite3_column_int64(stmt, 0);
         const char *name = (const char *)sqlite3_column_text(stmt, 1);
         snprintf(list[count].name, sizeof(list[count].name), "%s", name ? name : "");
+        const char *atype = (const char *)sqlite3_column_text(stmt, 2);
+        list[count].type = account_type_from_str(atype);
         count++;
     }
 
@@ -45,10 +61,10 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
     return count;
 }
 
-int64_t db_insert_account(sqlite3 *db, const char *name) {
+int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type) {
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "INSERT INTO accounts (name) VALUES (?)",
+        "INSERT INTO accounts (name, type) VALUES (?, ?)",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_insert_account prepare: %s\n", sqlite3_errmsg(db));
@@ -56,6 +72,7 @@ int64_t db_insert_account(sqlite3 *db, const char *name) {
     }
 
     sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, account_type_db_strings[type], -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

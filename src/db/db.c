@@ -58,7 +58,9 @@ static int create_schema(sqlite3 *db) {
 
         "CREATE TABLE IF NOT EXISTS accounts ("
         "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "    name TEXT NOT NULL UNIQUE"
+        "    name TEXT NOT NULL UNIQUE,"
+        "    type TEXT NOT NULL DEFAULT 'CASH'"
+        "        CHECK(type IN ('CASH','CHECKING','SAVINGS','CREDIT_CARD','PHYSICAL_ASSET','INVESTMENT'))"
         ");"
 
         "CREATE TABLE IF NOT EXISTS categories ("
@@ -105,9 +107,9 @@ static int create_schema(sqlite3 *db) {
 
 static int seed_defaults(sqlite3 *db) {
     const char *seed_sql =
-        "INSERT INTO schema_version (version) VALUES (1);"
+        "INSERT INTO schema_version (version) VALUES (2);"
 
-        "INSERT INTO accounts (name) VALUES ('Cash');"
+        "INSERT INTO accounts (name, type) VALUES ('Cash', 'CASH');"
 
         "INSERT INTO categories (name, type, parent_id) VALUES"
         "    ('Groceries', 'EXPENSE', NULL),"
@@ -125,6 +127,37 @@ static int seed_defaults(sqlite3 *db) {
         "    ('Other Income', 'INCOME', NULL);";
 
     return exec_sql(db, seed_sql);
+}
+
+static int get_schema_version(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db,
+        "SELECT MAX(version) FROM schema_version", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return 0;
+    int ver = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        ver = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return ver;
+}
+
+static int migrate_v1_to_v2(sqlite3 *db) {
+    if (exec_sql(db,
+            "ALTER TABLE accounts ADD COLUMN type TEXT NOT NULL DEFAULT 'CASH'"
+            " CHECK(type IN ('CASH','CHECKING','SAVINGS','CREDIT_CARD','PHYSICAL_ASSET','INVESTMENT'));"
+            "INSERT INTO schema_version (version) VALUES (2);") != 0) {
+        fprintf(stderr, "Migration v1->v2 failed\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int run_migrations(sqlite3 *db) {
+    int ver = get_schema_version(db);
+    if (ver < 2) {
+        if (migrate_v1_to_v2(db) != 0) return -1;
+    }
+    return 0;
 }
 
 sqlite3 *db_init(const char *path) {
@@ -159,10 +192,18 @@ sqlite3 *db_init(const char *path) {
         return NULL;
     }
 
-    if (new_db && seed_defaults(db) != 0) {
-        fprintf(stderr, "Failed to seed default data\n");
-        sqlite3_close(db);
-        return NULL;
+    if (new_db) {
+        if (seed_defaults(db) != 0) {
+            fprintf(stderr, "Failed to seed default data\n");
+            sqlite3_close(db);
+            return NULL;
+        }
+    } else {
+        if (run_migrations(db) != 0) {
+            fprintf(stderr, "Failed to run database migrations\n");
+            sqlite3_close(db);
+            return NULL;
+        }
     }
 
     return db;

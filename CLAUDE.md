@@ -65,7 +65,7 @@ make clean    # clean build artifacts
 - **Amounts:** Stored as integers in cents to avoid floating-point issues
 - **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
-- **Schema versioning:** `schema_version` table for future migrations (currently version 1)
+- **Schema versioning:** `schema_version` table for migrations (currently version 2)
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
 
 ## Status
@@ -75,8 +75,10 @@ make clean    # clean build artifacts
 - [x] Transaction input form ([plan](../.claude/plans/b3d42bcf-a861-4f8f-aec5-fe893c511847.md))
 - [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
 - [x] Add UI to add new accounts ([plan](../.claude/plans/stateless-wibbling-plum.md))
+- [x] Add a "Type" property to accounts (Cash, Checking, Savings, Credit Card, Physical Asset, Investment) ([plan](../.claude/plans/sequential-percolating-starlight.md))
 - [ ] Support split transactions
 - [ ] Allow editing/deleting transactions
+- [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data import (CSV)
 - [ ] Summary/report views
 - [ ] Improve color theme
@@ -89,4 +91,8 @@ make clean    # clean build artifacts
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
-- [ ] Add CLI arguments for quick actions (e.g., `ficli add -a
+- [ ] Add CLI arguments for quick actions (e.g., `ficli add -a`)
+- [ ] Add reconciliation
+- [ ] Add password protection and encryption
+- [ ] Support auto-categorization
+

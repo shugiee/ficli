@@ -23,7 +23,7 @@ Quick-reference for the current state of every file, its role, and key implement
 
 | File | Struct | Key Fields |
 |------|--------|------------|
-| `account.h` | `account_t` | `id`, `name[64]` |
+| `account.h` | `account_t`, `account_type_t` | `id`, `name[64]`, `type` (CASH/CHECKING/SAVINGS/CREDIT_CARD/PHYSICAL_ASSET/INVESTMENT) |
 | `category.h` | `category_t`, `category_type_t` | `id`, `name[64]`, `type` (EXPENSE/INCOME), `parent_id` |
 | `transaction.h` | `transaction_t`, `transaction_type_t` | `id`, `amount_cents`, `type` (EXPENSE/INCOME/TRANSFER), `account_id`, `category_id`, `date[11]`, `description[256]`, `transfer_id` |
 | `budget.h` | `budget_t` | `id`, `category_id`, `month[8]` ("YYYY-MM"), `limit_cents` |
@@ -86,12 +86,14 @@ All query functions in `query.c` follow this pattern:
 
 Types are stored as TEXT in SQLite (`"EXPENSE"`, `"INCOME"`, `"TRANSFER"`) and converted to/from C enums on read/write.
 
-## Schema (v1)
+## Schema (v2)
 
 **Tables:** `schema_version`, `accounts`, `categories`, `transactions`, `budgets`
 
-**Default seed data:** 1 account ("Cash"), 9 expense categories, 4 income categories.
+**Default seed data:** 1 account ("Cash", type CASH), 9 expense categories, 4 income categories.
 
 **Indexes:** `idx_transactions_date`, `idx_transactions_category`, `idx_transactions_account`, `idx_transactions_transfer`, `idx_budgets_month`, `idx_categories_parent`.
 
 Amounts are stored as `INTEGER` cents throughout. Dates are `TEXT` in `YYYY-MM-DD` format.
+
+**Migrations:** `db_init()` checks `schema_version` and runs migrations for existing databases. v1→v2 adds `type TEXT NOT NULL DEFAULT 'CASH'` column to `accounts`.
