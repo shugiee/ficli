@@ -17,6 +17,7 @@ typedef struct {
     int64_t id;
     char name[64];
     account_type_t type;
+    char card_last4[5]; // last 4 digits; non-empty only for CREDIT_CARD
 } account_t;
 
 #endif

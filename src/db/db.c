@@ -60,7 +60,8 @@ static int create_schema(sqlite3 *db) {
         "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "    name TEXT NOT NULL UNIQUE,"
         "    type TEXT NOT NULL DEFAULT 'CASH'"
-        "        CHECK(type IN ('CASH','CHECKING','SAVINGS','CREDIT_CARD','PHYSICAL_ASSET','INVESTMENT'))"
+        "        CHECK(type IN ('CASH','CHECKING','SAVINGS','CREDIT_CARD','PHYSICAL_ASSET','INVESTMENT')),"
+        "    card_last4 TEXT"
         ");"
 
         "CREATE TABLE IF NOT EXISTS categories ("

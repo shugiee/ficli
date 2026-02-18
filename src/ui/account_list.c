@@ -18,21 +18,24 @@ static const char *account_type_labels[] = {"Cash",           "Checking",
 // row 1: "Add Account:" label
 // row 2: name input field
 // row 3: type selector
-// row 4: message / blank
-// row 5: "Accounts" header (bold)
-// row 6: horizontal rule
-// data starts at row 7
-#define DATA_ROW_START 7
+// row 4: card last 4 (only shown for Credit Card type)
+// row 5: message / blank
+// row 6: "Accounts" header (bold)
+// row 7: horizontal rule
+// data starts at row 8
+#define DATA_ROW_START 8
 
 struct account_list_state {
     sqlite3 *db;
     account_t *accounts;
     int account_count;
-    int cursor; // -1 = name input, -2 = type selector, 0+ = list items
+    int cursor; // -1 = name input, -2 = type selector, -3 = card last 4, 0+ = list items
     int scroll_offset;
     char name_buf[64];
     int name_pos;
     int type_sel; // index into account_type_labels
+    char card_last4_buf[5]; // up to 4 digits
+    int card_last4_pos;
     char message[64];
     bool dirty;
 };
@@ -133,18 +136,36 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     if (type_active)
         wattroff(win, COLOR_PAIR(COLOR_SELECTED));
 
-    // -- Message (row 4) --
-    if (ls->message[0] != '\0') {
-        mvwprintw(win, 4, 2, "%s", ls->message);
+    // -- Card last 4 (row 4, credit card only) --
+    bool card_active = (ls->cursor == -3 && focused);
+    if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
+        mvwprintw(win, 4, 2, "Card last 4: ");
+        if (card_active)
+            wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        mvwprintw(win, 4, 15, "%-4s", ls->card_last4_buf);
+        if (card_active) {
+            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+            curs_set(1);
+            wmove(win, 4, 15 + ls->card_last4_pos);
+        }
+    } else {
+        mvwprintw(win, 4, 2, "%-*s", field_w + 10, ""); // clear row
     }
 
-    // -- "Accounts" header (row 5) --
+    // -- Message (row 5) --
+    if (ls->message[0] != '\0') {
+        mvwprintw(win, 5, 2, "%s", ls->message);
+    } else {
+        mvwprintw(win, 5, 2, "%-*s", field_w + 10, ""); // clear row
+    }
+
+    // -- "Accounts" header (row 6) --
     wattron(win, A_BOLD);
-    mvwprintw(win, 5, 2, "Accounts");
+    mvwprintw(win, 6, 2, "Accounts");
     wattroff(win, A_BOLD);
 
-    // -- Horizontal rule (row 6) --
-    wmove(win, 6, 2);
+    // -- Horizontal rule (row 7) --
+    wmove(win, 7, 2);
     for (int i = 2; i < w - 2; i++)
         waddch(win, ACS_HLINE);
 
@@ -201,16 +222,46 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
                 wattroff(win, A_DIM);
         }
 
-        // Show type label dimmed after the name
+        // Show type label (and card last 4 for credit cards) dimmed after name
         int name_len = (int)strlen(ls->accounts[idx].name);
-        int type_col =
-            3 + name_len + 2; // 2=left pad, +1 for space in format, +2 gap
+        int type_col = 3 + name_len + 2;
         const char *tlabel = account_type_labels[ls->accounts[idx].type];
-        if (type_col + (int)strlen(tlabel) + 3 < w - 2) {
+        char type_tag[32];
+        if (ls->accounts[idx].type == ACCOUNT_CREDIT_CARD &&
+                ls->accounts[idx].card_last4[0] != '\0') {
+            snprintf(type_tag, sizeof(type_tag), "[%s ****%s]",
+                     tlabel, ls->accounts[idx].card_last4);
+        } else {
+            snprintf(type_tag, sizeof(type_tag), "[%s]", tlabel);
+        }
+        if (type_col + (int)strlen(type_tag) < w - 2) {
             wattron(win, A_DIM);
-            mvwprintw(win, row, type_col, "[%s]", tlabel);
+            mvwprintw(win, row, type_col, "%s", type_tag);
             wattroff(win, A_DIM);
         }
+    }
+}
+
+static void submit_account(account_list_state_t *ls) {
+    if (ls->name_buf[0] == '\0') {
+        snprintf(ls->message, sizeof(ls->message), "Name cannot be empty");
+        return;
+    }
+    const char *card = (ls->type_sel == ACCOUNT_CREDIT_CARD)
+        ? ls->card_last4_buf : NULL;
+    int64_t id = db_insert_account(ls->db, ls->name_buf,
+                                   (account_type_t)ls->type_sel, card);
+    if (id < 0) {
+        snprintf(ls->message, sizeof(ls->message), "Error adding account");
+    } else {
+        snprintf(ls->message, sizeof(ls->message), "Added: %.56s",
+                 ls->name_buf);
+        ls->name_buf[0] = '\0';
+        ls->name_pos = 0;
+        ls->type_sel = 0;
+        ls->card_last4_buf[0] = '\0';
+        ls->card_last4_pos = 0;
+        ls->dirty = true;
     }
 }
 
@@ -224,25 +275,7 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
             return true;
         }
         if (ch == '\n') {
-            // Submit new account
-            if (ls->name_buf[0] == '\0') {
-                snprintf(ls->message, sizeof(ls->message),
-                         "Name cannot be empty");
-                return true;
-            }
-            int64_t id = db_insert_account(ls->db, ls->name_buf,
-                                           (account_type_t)ls->type_sel);
-            if (id < 0) {
-                snprintf(ls->message, sizeof(ls->message),
-                         "Error adding account");
-            } else {
-                snprintf(ls->message, sizeof(ls->message), "Added: %.56s",
-                         ls->name_buf);
-                ls->name_buf[0] = '\0';
-                ls->name_pos = 0;
-                ls->type_sel = 0;
-                ls->dirty = true;
-            }
+            submit_account(ls);
             return true;
         }
         // Text input
@@ -260,7 +293,9 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
             return true;
         case KEY_DOWN:
         case 'j':
-            if (ls->account_count > 0) {
+            if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
+                ls->cursor = -3; // go to card last 4
+            } else if (ls->account_count > 0) {
                 ls->cursor = 0;
                 curs_set(0);
             }
@@ -280,15 +315,59 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
         }
     }
 
+    if (ls->cursor == -3) {
+        // Card last 4 input is focused
+        switch (ch) {
+        case KEY_UP:
+        case 'k':
+            ls->cursor = -2; // back to type selector
+            return true;
+        case KEY_DOWN:
+        case 'j':
+            if (ls->account_count > 0) {
+                ls->cursor = 0;
+                curs_set(0);
+            }
+            return true;
+        case '\n':
+            submit_account(ls);
+            return true;
+        default: {
+            // Digits only, max 4
+            int len = (int)strlen(ls->card_last4_buf);
+            if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+                if (ls->card_last4_pos > 0) {
+                    memmove(&ls->card_last4_buf[ls->card_last4_pos - 1],
+                            &ls->card_last4_buf[ls->card_last4_pos],
+                            len - ls->card_last4_pos + 1);
+                    ls->card_last4_pos--;
+                }
+            } else if (ch == KEY_LEFT) {
+                if (ls->card_last4_pos > 0) ls->card_last4_pos--;
+            } else if (ch == KEY_RIGHT) {
+                if (ls->card_last4_pos < len) ls->card_last4_pos++;
+            } else if (isdigit(ch) && len < 4) {
+                memmove(&ls->card_last4_buf[ls->card_last4_pos + 1],
+                        &ls->card_last4_buf[ls->card_last4_pos],
+                        len - ls->card_last4_pos + 1);
+                ls->card_last4_buf[ls->card_last4_pos] = (char)ch;
+                ls->card_last4_pos++;
+            }
+            return true;
+        }
+        }
+    }
+
     // List is focused
     switch (ch) {
     case KEY_UP:
     case 'k':
         if (ls->cursor > 0) {
             ls->cursor--;
+        } else if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
+            ls->cursor = -3; // go to card last 4
         } else {
-            // Move to type selector
-            ls->cursor = -2;
+            ls->cursor = -2; // go to type selector
         }
         return true;
     case KEY_DOWN:
@@ -313,8 +392,10 @@ const char *account_list_status_hint(const account_list_state_t *ls) {
     if (ls->cursor == -1)
         return "q:Quit  Enter:Add  \u2193:Type  \u2190:Sidebar";
     if (ls->cursor == -2)
-        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:List  "
+        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:Next  "
                "\u2190:Sidebar";
+    if (ls->cursor == -3)
+        return "q:Quit  Enter:Add  \u2191:Type  \u2193:List  \u2190:Sidebar";
     return "q:Quit  \u2191\u2193:Navigate  \u2190:Sidebar";
 }
 

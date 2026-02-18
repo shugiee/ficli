@@ -43,7 +43,7 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "SELECT id, name, type FROM accounts ORDER BY name", -1, &stmt, NULL);
+        "SELECT id, name, type, card_last4 FROM accounts ORDER BY name", -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_accounts prepare: %s\n", sqlite3_errmsg(db));
         return -1;
@@ -73,6 +73,8 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
         snprintf(list[count].name, sizeof(list[count].name), "%s", name ? name : "");
         const char *atype = (const char *)sqlite3_column_text(stmt, 2);
         list[count].type = account_type_from_str(atype);
+        const char *cl4 = (const char *)sqlite3_column_text(stmt, 3);
+        snprintf(list[count].card_last4, sizeof(list[count].card_last4), "%s", cl4 ? cl4 : "");
         count++;
     }
 
@@ -81,10 +83,10 @@ int db_get_accounts(sqlite3 *db, account_t **out) {
     return count;
 }
 
-int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type) {
+int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type, const char *card_last4) {
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "INSERT INTO accounts (name, type) VALUES (?, ?)",
+        "INSERT INTO accounts (name, type, card_last4) VALUES (?, ?, ?)",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_insert_account prepare: %s\n", sqlite3_errmsg(db));
@@ -93,6 +95,10 @@ int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type) {
 
     sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, account_type_db_strings[type], -1, SQLITE_STATIC);
+    if (card_last4 && card_last4[0] != '\0')
+        sqlite3_bind_text(stmt, 3, card_last4, -1, SQLITE_STATIC);
+    else
+        sqlite3_bind_null(stmt, 3);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

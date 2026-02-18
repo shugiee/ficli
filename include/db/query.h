@@ -10,8 +10,9 @@
 // Fetch all accounts. Caller frees *out. Returns count, -1 on error.
 int db_get_accounts(sqlite3 *db, account_t **out);
 
-// Insert an account. Returns new row id, -1 on error.
-int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type);
+// Insert an account. card_last4 may be NULL or "" for non-credit-card accounts.
+// Returns new row id, -1 on error.
+int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type, const char *card_last4);
 
 // Fetch categories by type. Produces "Parent:Child" display names via JOIN.
 // Caller frees *out. Returns count, -1 on error.

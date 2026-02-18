@@ -65,7 +65,7 @@ make clean    # clean build artifacts
 - **Amounts:** Stored as integers in cents to avoid floating-point issues
 - **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
-- **Schema versioning:** `schema_version` table for migrations (currently version 2)
+- **Schema versioning:** `schema_version` table for migrations (currently version 3)
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
 - **Seed backup file** flicli_seed.sql. To use it: `sqlite3 ~/.local/share/ficli/ficli.db < ficli_seed.sql`
 
@@ -83,6 +83,9 @@ make clean    # clean build artifacts
 - [x] Show keyboard commands when user hits ?
 - [x] Align table header row
 - [x] Improve color theme
+- [ ] Add card number to CC accounts
+- [ ] Allow editing accounts
+- [ ] Data import (CSV)
 - [ ] Handle window resizing
 - [ ] Allow toggling light/dark mode
 - [ ] Show summary information in header
@@ -93,7 +96,6 @@ make clean    # clean build artifacts
 - [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data export (CSV)
 - [ ] Support split transactions
-- [ ] Data import (CSV)
 - [ ] Add row indices to transaction list
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers

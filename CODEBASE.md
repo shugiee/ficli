@@ -23,7 +23,7 @@ Quick-reference for the current state of every file, its role, and key implement
 
 | File | Struct | Key Fields |
 |------|--------|------------|
-| `account.h` | `account_t`, `account_type_t` | `id`, `name[64]`, `type` (CASH/CHECKING/SAVINGS/CREDIT_CARD/PHYSICAL_ASSET/INVESTMENT) |
+| `account.h` | `account_t`, `account_type_t` | `id`, `name[64]`, `type` (CASH/CHECKING/SAVINGS/CREDIT_CARD/PHYSICAL_ASSET/INVESTMENT), `card_last4[5]` (non-empty only for CREDIT_CARD) |
 | `category.h` | `category_t`, `category_type_t` | `id`, `name[64]`, `type` (EXPENSE/INCOME), `parent_id` |
 | `transaction.h` | `transaction_t`, `transaction_type_t` | `id`, `amount_cents`, `type` (EXPENSE/INCOME/TRANSFER), `account_id`, `category_id`, `date[11]`, `description[256]`, `transfer_id` |
 | `budget.h` | `budget_t` | `id`, `category_id`, `month[8]` ("YYYY-MM"), `limit_cents` |
@@ -96,4 +96,4 @@ Types are stored as TEXT in SQLite (`"EXPENSE"`, `"INCOME"`, `"TRANSFER"`) and c
 
 Amounts are stored as `INTEGER` cents throughout. Dates are `TEXT` in `YYYY-MM-DD` format.
 
-**Migrations:** `db_init()` checks `schema_version` and runs migrations for existing databases. v1→v2 adds `type TEXT NOT NULL DEFAULT 'CASH'` column to `accounts`.
+**Migrations:** `db_init()` checks `schema_version` and runs migrations for existing databases. v1→v2 adds `type TEXT NOT NULL DEFAULT 'CASH'` column to `accounts`. v2→v3 adds `card_last4 TEXT` (nullable) column to `accounts`.
