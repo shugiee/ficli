@@ -9,12 +9,12 @@
 #include <string.h>
 #include <time.h>
 
-#define FORM_WIDTH  50
+#define FORM_WIDTH 50
 #define FORM_HEIGHT 19
-#define LABEL_COL   2
-#define FIELD_COL   16
+#define LABEL_COL 2
+#define FIELD_COL 16
 #define FIELD_WIDTH 30
-#define MAX_DROP    5
+#define MAX_DROP 5
 
 enum {
     FIELD_TYPE,
@@ -27,10 +27,7 @@ enum {
     FIELD_COUNT
 };
 
-enum {
-    COLOR_FORM = 10,
-    COLOR_FORM_ACTIVE
-};
+enum { COLOR_FORM = 10, COLOR_FORM_ACTIVE };
 
 typedef struct {
     WINDOW *win;
@@ -79,7 +76,8 @@ static void form_load_categories(form_state_t *fs) {
         return;
 
     category_type_t ctype = (fs->txn_type == TRANSACTION_INCOME)
-        ? CATEGORY_INCOME : CATEGORY_EXPENSE;
+                                ? CATEGORY_INCOME
+                                : CATEGORY_EXPENSE;
     int count = db_get_categories(fs->db, ctype, &fs->categories);
     if (count > 0) {
         fs->category_count = count;
@@ -93,7 +91,8 @@ static void format_amount_string(int64_t cents, char *buf, size_t buflen) {
     snprintf(buf, buflen, "%ld.%02ld", (long)whole, (long)frac);
 }
 
-static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn, bool is_edit) {
+static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
+                            bool is_edit) {
     memset(fs, 0, sizeof(*fs));
     fs->db = db;
     fs->txn = txn;
@@ -110,8 +109,8 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn, b
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char datebuf[32];
-    snprintf(datebuf, sizeof(datebuf), "%04d-%02d-%02d",
-             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+    snprintf(datebuf, sizeof(datebuf), "%04d-%02d-%02d", tm->tm_year + 1900,
+             tm->tm_mon + 1, tm->tm_mday);
     memcpy(fs->date, datebuf, 10);
     fs->date[10] = '\0';
     fs->date_pos = 10;
@@ -161,13 +160,7 @@ static void form_cleanup_state(form_state_t *fs) {
 }
 
 static const char *field_labels[FIELD_SUBMIT] = {
-    "Type",
-    "Amount",
-    "Account",
-    "Category",
-    "Date",
-    "Description"
-};
+    "Type", "Amount", "Account", "Category", "Date", "Description"};
 
 static int field_row(int field) {
     // Row within form window for each field (after title and border)
@@ -181,7 +174,8 @@ static void form_draw(form_state_t *fs) {
     box(w, 0, 0);
 
     // Title
-    const char *title = fs->is_edit ? " Edit Transaction " : " Add Transaction ";
+    const char *title =
+        fs->is_edit ? " Edit Transaction " : " Add Transaction ";
     int tw = (int)strlen(title);
     int ww = getmaxx(w);
     mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
@@ -243,7 +237,8 @@ static void form_draw(form_state_t *fs) {
 
     // Submit button
     int submit_row = field_row(FIELD_SUBMIT);
-    bool submit_active = (fs->current_field == FIELD_SUBMIT && !fs->dropdown_open);
+    bool submit_active =
+        (fs->current_field == FIELD_SUBMIT && !fs->dropdown_open);
     const char *btn = "[ Submit ]";
     int btn_len = (int)strlen(btn);
     if (submit_active)
@@ -332,7 +327,8 @@ static void form_draw_dropdown(form_state_t *fs) {
     if (fs->dropdown_scroll > 0)
         mvwaddch(w, base_row, FIELD_COL + FIELD_WIDTH, ACS_UARROW);
     if (fs->dropdown_scroll + visible < count)
-        mvwaddch(w, base_row + visible - 1, FIELD_COL + FIELD_WIDTH, ACS_DARROW);
+        mvwaddch(w, base_row + visible - 1, FIELD_COL + FIELD_WIDTH,
+                 ACS_DARROW);
 
     wmove(w, base_row + fs->dropdown_sel - fs->dropdown_scroll, FIELD_COL);
     wrefresh(w);
@@ -352,7 +348,8 @@ static void form_open_dropdown(form_state_t *fs) {
         sel = fs->category_sel;
     }
 
-    if (count == 0) return;
+    if (count == 0)
+        return;
 
     fs->dropdown_open = true;
     fs->dropdown_sel = sel;
@@ -392,7 +389,8 @@ static transaction_type_t prev_type(transaction_type_t type) {
 
 // Parse amount string to cents. Returns -1 on invalid input.
 static int64_t parse_amount_cents(const char *str) {
-    if (str[0] == '\0') return -1;
+    if (str[0] == '\0')
+        return -1;
 
     // Find decimal point
     const char *dot = strchr(str, '.');
@@ -402,13 +400,15 @@ static int64_t parse_amount_cents(const char *str) {
     if (dot) {
         // Parse whole part
         for (const char *p = str; p < dot; p++) {
-            if (!isdigit((unsigned char)*p)) return -1;
+            if (!isdigit((unsigned char)*p))
+                return -1;
             whole = whole * 10 + (*p - '0');
         }
         // Parse fractional part (up to 2 digits)
         int frac_digits = 0;
         for (const char *p = dot + 1; *p; p++) {
-            if (!isdigit((unsigned char)*p)) return -1;
+            if (!isdigit((unsigned char)*p))
+                return -1;
             if (frac_digits < 2) {
                 frac = frac * 10 + (*p - '0');
                 frac_digits++;
@@ -417,11 +417,13 @@ static int64_t parse_amount_cents(const char *str) {
             }
         }
         // Pad to 2 decimal places
-        if (frac_digits == 1) frac *= 10;
+        if (frac_digits == 1)
+            frac *= 10;
     } else {
         // No decimal point - whole number
         for (const char *p = str; *p; p++) {
-            if (!isdigit((unsigned char)*p)) return -1;
+            if (!isdigit((unsigned char)*p))
+                return -1;
             whole = whole * 10 + (*p - '0');
         }
     }
@@ -430,13 +432,16 @@ static int64_t parse_amount_cents(const char *str) {
 }
 
 static bool validate_date(const char *str) {
-    if (strlen(str) != 10) return false;
+    if (strlen(str) != 10)
+        return false;
     // Check format: YYYY-MM-DD
     for (int i = 0; i < 10; i++) {
         if (i == 4 || i == 7) {
-            if (str[i] != '-') return false;
+            if (str[i] != '-')
+                return false;
         } else {
-            if (!isdigit((unsigned char)str[i])) return false;
+            if (!isdigit((unsigned char)str[i]))
+                return false;
         }
     }
     return true;
@@ -508,9 +513,11 @@ static void handle_text_input(char *buf, int *pos, int maxlen, int ch,
     int len = (int)strlen(buf);
 
     if (ch == KEY_LEFT) {
-        if (*pos > 0) (*pos)--;
+        if (*pos > 0)
+            (*pos)--;
     } else if (ch == KEY_RIGHT) {
-        if (*pos < len) (*pos)++;
+        if (*pos < len)
+            (*pos)++;
     } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
         if (*pos > 0) {
             memmove(&buf[*pos - 1], &buf[*pos], len - *pos + 1);
@@ -520,7 +527,8 @@ static void handle_text_input(char *buf, int *pos, int maxlen, int ch,
         if (digits_only) {
             if (ch == '.') {
                 // Only allow one decimal point
-                if (strchr(buf, '.')) return;
+                if (strchr(buf, '.'))
+                    return;
             } else if (!isdigit(ch)) {
                 return;
             }
@@ -535,9 +543,11 @@ static void handle_date_input(char *buf, int *pos, int ch) {
     int len = (int)strlen(buf);
 
     if (ch == KEY_LEFT) {
-        if (*pos > 0) (*pos)--;
+        if (*pos > 0)
+            (*pos)--;
     } else if (ch == KEY_RIGHT) {
-        if (*pos < len) (*pos)++;
+        if (*pos < len)
+            (*pos)++;
     } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
         if (*pos > 0) {
             memmove(&buf[*pos - 1], &buf[*pos], len - *pos + 1);
@@ -550,7 +560,8 @@ static void handle_date_input(char *buf, int *pos, int ch) {
     }
 }
 
-form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, bool is_edit) {
+form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
+                               bool is_edit) {
     int ph, pw;
     getmaxyx(parent, ph, pw);
 
@@ -584,14 +595,16 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, 
         fs.error[0] = '\0';
 
         if (fs.dropdown_open) {
-            int count = (fs.current_field == FIELD_ACCOUNT)
-                ? fs.account_count : fs.category_count;
+            int count = (fs.current_field == FIELD_ACCOUNT) ? fs.account_count
+                                                            : fs.category_count;
             switch (ch) {
             case KEY_UP:
-                if (fs.dropdown_sel > 0) fs.dropdown_sel--;
+                if (fs.dropdown_sel > 0)
+                    fs.dropdown_sel--;
                 break;
             case KEY_DOWN:
-                if (fs.dropdown_sel < count - 1) fs.dropdown_sel++;
+                if (fs.dropdown_sel < count - 1)
+                    fs.dropdown_sel++;
                 break;
             case '\n':
                 form_close_dropdown(&fs, true);
@@ -656,8 +669,8 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, 
                       fs.txn_type == TRANSACTION_TRANSFER))
                     form_open_dropdown(&fs);
             } else if (fs.current_field == FIELD_DESC) {
-                handle_text_input(fs.desc, &fs.desc_pos,
-                                  (int)sizeof(fs.desc), ch, false);
+                handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
+                                  ch, false);
             }
             break;
 
@@ -671,8 +684,8 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, 
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
             } else if (fs.current_field == FIELD_DESC) {
-                handle_text_input(fs.desc, &fs.desc_pos,
-                                  (int)sizeof(fs.desc), ch, false);
+                handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
+                                  ch, false);
             }
             break;
 
@@ -686,8 +699,8 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, 
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
             } else if (fs.current_field == FIELD_DESC) {
-                handle_text_input(fs.desc, &fs.desc_pos,
-                                  (int)sizeof(fs.desc), ch, false);
+                handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
+                                  ch, false);
             }
             break;
 
@@ -703,8 +716,8 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, 
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
             } else if (fs.current_field == FIELD_DESC) {
-                handle_text_input(fs.desc, &fs.desc_pos,
-                                  (int)sizeof(fs.desc), ch, false);
+                handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
+                                  ch, false);
             }
             break;
         }

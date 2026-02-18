@@ -10,9 +10,9 @@
 #define COLOR_SELECTED 2
 
 // Display labels for account types (indexes match account_type_t enum)
-static const char *account_type_labels[] = {
-    "Cash", "Checking", "Savings", "Credit Card", "Physical Asset", "Investment"
-};
+static const char *account_type_labels[] = {"Cash",           "Checking",
+                                            "Savings",        "Credit Card",
+                                            "Physical Asset", "Investment"};
 
 // Layout constants (rows inside box border)
 // row 0: top border
@@ -29,11 +29,11 @@ struct account_list_state {
     sqlite3 *db;
     account_t *accounts;
     int account_count;
-    int cursor;          // -1 = name input, -2 = type selector, 0+ = list items
+    int cursor; // -1 = name input, -2 = type selector, 0+ = list items
     int scroll_offset;
     char name_buf[64];
     int name_pos;
-    int type_sel;        // index into account_type_labels
+    int type_sel; // index into account_type_labels
     char message[64];
     bool dirty;
 };
@@ -44,7 +44,8 @@ static void reload(account_list_state_t *ls) {
     ls->account_count = 0;
 
     ls->account_count = db_get_accounts(ls->db, &ls->accounts);
-    if (ls->account_count < 0) ls->account_count = 0;
+    if (ls->account_count < 0)
+        ls->account_count = 0;
 
     if (ls->cursor > 0 && ls->cursor >= ls->account_count)
         ls->cursor = ls->account_count > 0 ? ls->account_count - 1 : -1;
@@ -54,7 +55,8 @@ static void reload(account_list_state_t *ls) {
 
 account_list_state_t *account_list_create(sqlite3 *db) {
     account_list_state_t *ls = calloc(1, sizeof(*ls));
-    if (!ls) return NULL;
+    if (!ls)
+        return NULL;
     ls->db = db;
     ls->cursor = -1; // start focused on name input
     ls->dirty = true;
@@ -62,7 +64,8 @@ account_list_state_t *account_list_create(sqlite3 *db) {
 }
 
 void account_list_destroy(account_list_state_t *ls) {
-    if (!ls) return;
+    if (!ls)
+        return;
     free(ls->accounts);
     free(ls);
 }
@@ -71,9 +74,11 @@ static void handle_text_input(char *buf, int *pos, int maxlen, int ch) {
     int len = (int)strlen(buf);
 
     if (ch == KEY_LEFT) {
-        if (*pos > 0) (*pos)--;
+        if (*pos > 0)
+            (*pos)--;
     } else if (ch == KEY_RIGHT) {
-        if (*pos < len) (*pos)++;
+        if (*pos < len)
+            (*pos)++;
     } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
         if (*pos > 0) {
             memmove(&buf[*pos - 1], &buf[*pos], len - *pos + 1);
@@ -87,14 +92,17 @@ static void handle_text_input(char *buf, int *pos, int maxlen, int ch) {
 }
 
 void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
-    if (ls->dirty) reload(ls);
+    if (ls->dirty)
+        reload(ls);
 
     int h, w;
     getmaxyx(win, h, w);
 
     int field_w = w - 6; // padding on each side
-    if (field_w < 10) field_w = 10;
-    if (field_w > 60) field_w = 60;
+    if (field_w < 10)
+        field_w = 10;
+    if (field_w > 60)
+        field_w = 60;
 
     // -- "Add Account:" label (row 1) --
     wattron(win, A_BOLD);
@@ -143,13 +151,15 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
 
     // -- Account list --
     int visible_rows = h - 1 - DATA_ROW_START;
-    if (visible_rows < 1) visible_rows = 1;
+    if (visible_rows < 1)
+        visible_rows = 1;
 
     if (ls->account_count == 0) {
         const char *msg = "No accounts";
         int mlen = (int)strlen(msg);
         int row = DATA_ROW_START + visible_rows / 2;
-        if (row >= h - 1) row = DATA_ROW_START;
+        if (row >= h - 1)
+            row = DATA_ROW_START;
         mvwprintw(win, row, (w - mlen) / 2, "%s", msg);
         return;
     }
@@ -164,17 +174,20 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
         if (ls->cursor >= ls->scroll_offset + visible_rows)
             ls->scroll_offset = ls->cursor - visible_rows + 1;
     }
-    if (ls->scroll_offset < 0) ls->scroll_offset = 0;
+    if (ls->scroll_offset < 0)
+        ls->scroll_offset = 0;
 
     for (int i = 0; i < visible_rows; i++) {
         int idx = ls->scroll_offset + i;
-        if (idx >= ls->account_count) break;
+        if (idx >= ls->account_count)
+            break;
 
         int row = DATA_ROW_START + i;
         bool selected = (idx == ls->cursor);
 
         if (selected) {
-            if (!focused) wattron(win, A_DIM);
+            if (!focused)
+                wattron(win, A_DIM);
             wattron(win, A_REVERSE);
         }
 
@@ -185,12 +198,14 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
 
         if (selected) {
             wattroff(win, A_REVERSE);
-            if (!focused) wattroff(win, A_DIM);
+            if (!focused)
+                wattroff(win, A_DIM);
         }
 
         // Show type label dimmed after the name
         int name_len = (int)strlen(ls->accounts[idx].name);
-        int type_col = 3 + name_len + 2; // 2=left pad, +1 for space in format, +2 gap
+        int type_col =
+            3 + name_len + 2; // 2=left pad, +1 for space in format, +2 gap
         const char *tlabel = account_type_labels[ls->accounts[idx].type];
         if (type_col + (int)strlen(tlabel) + 3 < w - 2) {
             wattron(win, A_DIM);
@@ -212,15 +227,18 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
         if (ch == '\n') {
             // Submit new account
             if (ls->name_buf[0] == '\0') {
-                snprintf(ls->message, sizeof(ls->message), "Name cannot be empty");
+                snprintf(ls->message, sizeof(ls->message),
+                         "Name cannot be empty");
                 return true;
             }
             int64_t id = db_insert_account(ls->db, ls->name_buf,
                                            (account_type_t)ls->type_sel);
             if (id < 0) {
-                snprintf(ls->message, sizeof(ls->message), "Error adding account");
+                snprintf(ls->message, sizeof(ls->message),
+                         "Error adding account");
             } else {
-                snprintf(ls->message, sizeof(ls->message), "Added: %.56s", ls->name_buf);
+                snprintf(ls->message, sizeof(ls->message), "Added: %.56s",
+                         ls->name_buf);
                 ls->name_buf[0] = '\0';
                 ls->name_pos = 0;
                 ls->type_sel = 0;
@@ -250,7 +268,8 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
             return true;
         case KEY_LEFT:
         case 'h':
-            ls->type_sel = (ls->type_sel + ACCOUNT_TYPE_COUNT - 1) % ACCOUNT_TYPE_COUNT;
+            ls->type_sel =
+                (ls->type_sel + ACCOUNT_TYPE_COUNT - 1) % ACCOUNT_TYPE_COUNT;
             return true;
         case KEY_RIGHT:
         case 'l':
@@ -295,10 +314,12 @@ const char *account_list_status_hint(const account_list_state_t *ls) {
     if (ls->cursor == -1)
         return "q:Quit  Enter:Add  \u2193:Type  \u2190:Sidebar";
     if (ls->cursor == -2)
-        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:List  \u2190:Sidebar";
+        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:List  "
+               "\u2190:Sidebar";
     return "q:Quit  \u2191\u2193:Navigate  \u2190:Sidebar";
 }
 
 void account_list_mark_dirty(account_list_state_t *ls) {
-    if (ls) ls->dirty = true;
+    if (ls)
+        ls->dirty = true;
 }

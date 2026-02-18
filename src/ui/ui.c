@@ -3,8 +3,8 @@
 #include "ui/form.h"
 #include "ui/txn_list.h"
 
-#include <ncurses.h>
 #include <locale.h>
+#include <ncurses.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -17,17 +17,12 @@ enum {
     COLOR_STATUS,
     // 10, 11 reserved for form colors
     COLOR_EXPENSE = 12,
-    COLOR_INCOME  = 13
+    COLOR_INCOME = 13
 };
 
-static const char *menu_labels[SCREEN_COUNT] = {
-    "Dashboard",
-    "Transactions",
-    "Categories",
-    "Budgets",
-    "Reports",
-    "Accounts"
-};
+static const char *menu_labels[SCREEN_COUNT] = {"Dashboard",  "Transactions",
+                                                "Categories", "Budgets",
+                                                "Reports",    "Accounts"};
 
 static struct {
     WINDOW *header;
@@ -44,60 +39,61 @@ static struct {
 } state;
 
 typedef struct {
-    const char *key;   /* NULL = section header, "" = blank separator */
+    const char *key; /* NULL = section header, "" = blank separator */
     const char *desc;
 } help_row_t;
 
 static const help_row_t help_rows[] = {
-    { NULL, "Global" },
-    { "q",                  "Quit" },
-    { "a",                  "Add transaction" },
-    { "?",                  "This help" },
+    {NULL, "Global"},
+    {"q", "Quit"},
+    {"a", "Add transaction"},
+    {"?", "This help"},
 
-    { "", "" },
-    { NULL, "Navigation (sidebar)" },
-    { "j / \u2193",         "Move down" },
-    { "k / \u2191",         "Move up" },
-    { "l / \u2192 / Enter", "Select / enter content" },
-    { "h / \u2190 / Esc",   "Back to sidebar" },
+    {"", ""},
+    {NULL, "Navigation (sidebar)"},
+    {"j / \u2193", "Move down"},
+    {"k / \u2191", "Move up"},
+    {"l / \u2192 / Enter", "Select / enter content"},
+    {"h / \u2190 / Esc", "Back to sidebar"},
 
-    { "", "" },
-    { NULL, "Transactions list" },
-    { "e",                  "Edit selected" },
-    { "d",                  "Delete selected" },
-    { "/",                  "Filter" },
-    { "s",                  "Cycle sort column" },
-    { "S",                  "Toggle sort direction" },
-    { "g / Home",           "Jump to first" },
-    { "G / End",            "Jump to last" },
-    { "1-9",                "Switch account tab" },
+    {"", ""},
+    {NULL, "Transactions list"},
+    {"e", "Edit selected"},
+    {"d", "Delete selected"},
+    {"/", "Filter"},
+    {"s", "Cycle sort column"},
+    {"S", "Toggle sort direction"},
+    {"g / Home", "Jump to first"},
+    {"G / End", "Jump to last"},
+    {"1-9", "Switch account tab"},
 
-    { "", "" },
-    { NULL, "Filter mode (transactions)" },
-    { "type",               "Add to filter" },
-    { "Backspace",          "Remove character" },
-    { "Enter",              "Confirm filter" },
-    { "Esc",                "Clear and close filter" },
+    {"", ""},
+    {NULL, "Filter mode (transactions)"},
+    {"type", "Add to filter"},
+    {"Backspace", "Remove character"},
+    {"Enter", "Confirm filter"},
+    {"Esc", "Clear and close filter"},
 
-    { "", "" },
-    { NULL, "Transaction form" },
-    { "Tab / \u2193",         "Next field" },
-    { "Shift+Tab / \u2191",   "Previous field" },
-    { "Ctrl+S",               "Save" },
-    { "Esc",                  "Cancel" },
+    {"", ""},
+    {NULL, "Transaction form"},
+    {"Tab / \u2193", "Next field"},
+    {"Shift+Tab / \u2191", "Previous field"},
+    {"Ctrl+S", "Save"},
+    {"Esc", "Cancel"},
 
-    { "", "" },
-    { NULL, "Accounts" },
-    { "Enter",              "Add account" },
-    { "\u2190 / \u2192",    "Change type" },
+    {"", ""},
+    {NULL, "Accounts"},
+    {"Enter", "Add account"},
+    {"\u2190 / \u2192", "Change type"},
 };
 
 #define HELP_ROW_COUNT ((int)(sizeof(help_rows) / sizeof(help_rows[0])))
 
-#define HELP_WIN_W   52
-#define HELP_KEY_W   18
-/* desc width: 52 - 2(border) - 18(key) - 2(left pad + gap) - 1(right pad) = 29 */
-#define HELP_DESC_W  (HELP_WIN_W - 2 - HELP_KEY_W - 2 - 1)
+#define HELP_WIN_W 52
+#define HELP_KEY_W 18
+/* desc width: 52 - 2(border) - 18(key) - 2(left pad + gap) - 1(right pad) = 29
+ */
+#define HELP_DESC_W (HELP_WIN_W - 2 - HELP_KEY_W - 2 - 1)
 
 static void ui_create_layout(void) {
     int rows, cols;
@@ -106,10 +102,10 @@ static void ui_create_layout(void) {
     int content_h = rows - 2; // minus header and status
     int content_w = cols - SIDEBAR_WIDTH;
 
-    state.header  = newwin(1, cols, 0, 0);
+    state.header = newwin(1, cols, 0, 0);
     state.sidebar = newwin(content_h, SIDEBAR_WIDTH, 1, 0);
     state.content = newwin(content_h, content_w, 1, SIDEBAR_WIDTH);
-    state.status  = newwin(1, cols, rows - 1, 0);
+    state.status = newwin(1, cols, rows - 1, 0);
 }
 
 static void ui_destroy_layout(void) {
@@ -132,15 +128,18 @@ static void ui_draw_sidebar(void) {
         if (i == state.sidebar_sel) {
             if (state.content_focused) {
                 wattron(state.sidebar, A_DIM | A_REVERSE);
-                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3,
+                          menu_labels[i]);
                 wattroff(state.sidebar, A_DIM | A_REVERSE);
             } else {
                 wattron(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
-                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+                mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3,
+                          menu_labels[i]);
                 wattroff(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
             }
         } else {
-            mvwprintw(state.sidebar, i + 1, 2, "%-*s", SIDEBAR_WIDTH - 3, menu_labels[i]);
+            mvwprintw(state.sidebar, i + 1, 2, "%-*s", SIDEBAR_WIDTH - 3,
+                      menu_labels[i]);
         }
     }
     wnoutrefresh(state.sidebar);
@@ -159,7 +158,8 @@ static void ui_draw_content(void) {
         if (!state.account_list)
             state.account_list = account_list_create(state.db);
         if (state.account_list)
-            account_list_draw(state.account_list, state.content, state.content_focused);
+            account_list_draw(state.account_list, state.content,
+                              state.content_focused);
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
@@ -174,12 +174,17 @@ static void ui_draw_content(void) {
 static void ui_draw_status(void) {
     werase(state.status);
     wbkgd(state.status, COLOR_PAIR(COLOR_STATUS));
-    if (state.content_focused && state.current_screen == SCREEN_TRANSACTIONS && state.txn_list) {
-        mvwprintw(state.status, 0, 1, "%s", txn_list_status_hint(state.txn_list));
-    } else if (state.content_focused && state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
-        mvwprintw(state.status, 0, 1, "%s", account_list_status_hint(state.account_list));
+    if (state.content_focused && state.current_screen == SCREEN_TRANSACTIONS &&
+        state.txn_list) {
+        mvwprintw(state.status, 0, 1, "%s",
+                  txn_list_status_hint(state.txn_list));
+    } else if (state.content_focused &&
+               state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
+        mvwprintw(state.status, 0, 1, "%s",
+                  account_list_status_hint(state.account_list));
     } else {
-        mvwprintw(state.status, 0, 1, "q:Quit  a:Add  ?:Help  \u2191\u2193:Navigate  Enter:Select");
+        mvwprintw(state.status, 0, 1,
+                  "q:Quit  a:Add  ?:Help  \u2191\u2193:Navigate  Enter:Select");
     }
     wnoutrefresh(state.status);
 }
@@ -196,30 +201,34 @@ static void ui_show_help(void) {
     int scr_rows, scr_cols;
     getmaxyx(stdscr, scr_rows, scr_cols);
 
-    int win_h = HELP_ROW_COUNT + 2;   /* +2 for top/bottom border */
+    int win_h = HELP_ROW_COUNT + 2; /* +2 for top/bottom border */
     int max_h = scr_rows - 2;
-    if (max_h < 6) max_h = 6;
-    if (win_h > max_h) win_h = max_h;
+    if (max_h < 6)
+        max_h = 6;
+    if (win_h > max_h)
+        win_h = max_h;
     int win_w = HELP_WIN_W;
-    if (win_w > scr_cols) win_w = scr_cols;
+    if (win_w > scr_cols)
+        win_w = scr_cols;
 
-    WINDOW *w = newwin(win_h, win_w,
-                       (scr_rows - win_h) / 2,
-                       (scr_cols - win_w) / 2);
+    WINDOW *w =
+        newwin(win_h, win_w, (scr_rows - win_h) / 2, (scr_cols - win_w) / 2);
     keypad(w, TRUE);
 
     /* Interior rows 1..win_h-2; footer printed in bottom border row */
-    int visible    = win_h - 2;
-    if (visible < 1) visible = 1;
+    int visible = win_h - 2;
+    if (visible < 1)
+        visible = 1;
     int max_scroll = HELP_ROW_COUNT - visible;
-    if (max_scroll < 0) max_scroll = 0;
+    if (max_scroll < 0)
+        max_scroll = 0;
 
-    int  scroll = 0;
-    bool done   = false;
+    int scroll = 0;
+    bool done = false;
 
     while (!done) {
         werase(w);
-        wbkgd(w, COLOR_PAIR(10));   /* COLOR_FORM: white-on-blue */
+        wbkgd(w, COLOR_PAIR(10)); /* COLOR_FORM: white-on-blue */
         box(w, 0, 0);
 
         /* Title in top border */
@@ -231,14 +240,15 @@ static void ui_show_help(void) {
         const char *footer;
         int footer_cols;
         if (scrollable) {
-            footer      = " j/\u2193 k/\u2191:Scroll  Any other key:Close ";
-            footer_cols = 38;   /* display columns, not byte count */
+            footer = " j/\u2193 k/\u2191:Scroll  Any other key:Close ";
+            footer_cols = 38; /* display columns, not byte count */
         } else {
-            footer      = " Any key to close ";
+            footer = " Any key to close ";
             footer_cols = 18;
         }
         int fx = (win_w - footer_cols) / 2;
-        if (fx < 1) fx = 1;
+        if (fx < 1)
+            fx = 1;
         mvwprintw(w, win_h - 1, fx, "%s", footer);
 
         /* Scroll indicators at col win_w-2 (right pad column, inside border) */
@@ -250,7 +260,8 @@ static void ui_show_help(void) {
         /* Content rows */
         for (int i = 0; i < visible; i++) {
             int idx = scroll + i;
-            if (idx >= HELP_ROW_COUNT) break;
+            if (idx >= HELP_ROW_COUNT)
+                break;
             const help_row_t *r = &help_rows[idx];
             int row = 1 + i;
 
@@ -259,10 +270,9 @@ static void ui_show_help(void) {
                 mvwprintw(w, row, 2, "%-*.*s", win_w - 4, win_w - 4, r->desc);
                 wattroff(w, A_BOLD);
             } else if (r->key[0] != '\0') {
-                mvwprintw(w, row, 2,
-                          "%-*.*s", HELP_KEY_W, HELP_KEY_W, r->key);
-                mvwprintw(w, row, 2 + HELP_KEY_W + 1,
-                          "%-*.*s", HELP_DESC_W, HELP_DESC_W, r->desc);
+                mvwprintw(w, row, 2, "%-*.*s", HELP_KEY_W, HELP_KEY_W, r->key);
+                mvwprintw(w, row, 2 + HELP_KEY_W + 1, "%-*.*s", HELP_DESC_W,
+                          HELP_DESC_W, r->desc);
             }
             /* empty key string = blank row, nothing to draw */
         }
@@ -271,9 +281,11 @@ static void ui_show_help(void) {
 
         int ch = wgetch(w);
         if (scrollable && (ch == KEY_DOWN || ch == 'j')) {
-            if (scroll < max_scroll) scroll++;
+            if (scroll < max_scroll)
+                scroll++;
         } else if (scrollable && (ch == KEY_UP || ch == 'k')) {
-            if (scroll > 0) scroll--;
+            if (scroll > 0)
+                scroll--;
         } else {
             done = true;
         }
@@ -330,13 +342,13 @@ static void ui_handle_input(int ch) {
             state.current_screen == SCREEN_ACCOUNTS)
             state.content_focused = true;
         break;
-    case 'a':
-        {
-            transaction_t txn = {0};
-            form_result_t res = form_transaction(state.content, state.db, &txn, false);
-            if (res == FORM_SAVED && state.txn_list)
-                txn_list_mark_dirty(state.txn_list);
-        }
+    case 'a': {
+        transaction_t txn = {0};
+        form_result_t res =
+            form_transaction(state.content, state.db, &txn, false);
+        if (res == FORM_SAVED && state.txn_list)
+            txn_list_mark_dirty(state.txn_list);
+    }
         touchwin(state.header);
         touchwin(state.sidebar);
         touchwin(state.content);
@@ -368,18 +380,16 @@ void ui_init(void) {
 
     start_color();
     use_default_colors();
-    init_pair(COLOR_HEADER,   COLOR_BLACK, COLOR_CYAN);
-    init_pair(COLOR_SELECTED,  COLOR_BLACK, COLOR_WHITE);
-    init_pair(COLOR_STATUS,   COLOR_BLACK, COLOR_CYAN);
-    init_pair(10, COLOR_WHITE, COLOR_BLUE);   // COLOR_FORM
-    init_pair(11, COLOR_BLACK, COLOR_CYAN);   // COLOR_FORM_ACTIVE
-    init_pair(COLOR_EXPENSE, COLOR_RED,   -1);
-    init_pair(COLOR_INCOME,  COLOR_GREEN, -1);
+    init_pair(COLOR_HEADER, COLOR_BLACK, COLOR_CYAN);
+    init_pair(COLOR_SELECTED, COLOR_BLACK, COLOR_WHITE);
+    init_pair(COLOR_STATUS, COLOR_BLACK, COLOR_CYAN);
+    init_pair(10, COLOR_WHITE, COLOR_BLUE); // COLOR_FORM
+    init_pair(11, COLOR_BLACK, COLOR_CYAN); // COLOR_FORM_ACTIVE
+    init_pair(COLOR_EXPENSE, COLOR_RED, -1);
+    init_pair(COLOR_INCOME, COLOR_GREEN, -1);
 }
 
-void ui_cleanup(void) {
-    endwin();
-}
+void ui_cleanup(void) { endwin(); }
 
 void ui_run(sqlite3 *db) {
     state.db = db;
