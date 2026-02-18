@@ -490,7 +490,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 
         // Payee
         int payee_col = amount_col + AMOUNT_COL_WIDTH;
-        mvwprintw(win, row, payee_col, "%-*.*s", PAYEE_COL_WIDTH,
+        mvwprintw(win, row, payee_col, "   %-*.*s", PAYEE_COL_WIDTH,
                   PAYEE_COL_WIDTH, t->payee);
 
         // Description
