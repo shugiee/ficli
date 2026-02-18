@@ -149,8 +149,8 @@ static void ui_handle_input(int ch) {
                 return;
         }
 
-        // LEFT / Escape unfocus content if not consumed above
-        if (ch == KEY_LEFT || ch == 27) {
+        // LEFT / h / Escape unfocus content if not consumed above
+        if (ch == KEY_LEFT || ch == 'h' || ch == 27) {
             state.content_focused = false;
             return;
         }
@@ -163,15 +163,18 @@ static void ui_handle_input(int ch) {
         state.running = false;
         break;
     case KEY_UP:
+    case 'k':
         if (!state.content_focused && state.sidebar_sel > 0)
             state.sidebar_sel--;
         break;
     case KEY_DOWN:
+    case 'j':
         if (!state.content_focused && state.sidebar_sel < SCREEN_COUNT - 1)
             state.sidebar_sel++;
         break;
     case '\n':
     case KEY_RIGHT:
+    case 'l':
         state.current_screen = state.sidebar_sel;
         if (state.current_screen == SCREEN_TRANSACTIONS ||
             state.current_screen == SCREEN_ACCOUNTS)

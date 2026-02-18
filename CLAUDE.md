@@ -78,20 +78,18 @@ make clean    # clean build artifacts
 - [x] Add a "Type" property to accounts (Cash, Checking, Savings, Credit Card, Physical Asset, Investment) ([plan](../.claude/plans/sequential-percolating-starlight.md))
 - [x] Allow editing/deleting transactions
 - [x] Support sort and filter in transaction list ([plan](../.claude/plans/fluttering-shimmying-river.md))
+- [ ] Show summary information in header
 - [ ] Data import (CSV)
 - [ ] Summary/report views
 - [ ] Improve color theme
 - [ ] Category management
 - [ ] Budget tracking
-- [ ] Recurring transactions
-- [ ] Show summary information in header
 - [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data export (CSV)
 - [ ] Support split transactions
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
-- [ ] Add CLI arguments for quick actions (e.g., `ficli add -a`)
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption
 - [ ] Support auto-categorization
@@ -99,3 +97,4 @@ make clean    # clean build artifacts
 - [ ] Add error UI for handling logic mismatches, e.g. transfers with more than 2 transactions
 - [ ] Add popout for keyboard shortcuts reference
 - [ ] Allow hjkl navigation, matching arrow keys
+- [ ] Add CLI arguments for quick actions (e.g., `ficli add -a`)

@@ -238,18 +238,22 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
         // Type selector is focused
         switch (ch) {
         case KEY_UP:
+        case 'k':
             ls->cursor = -1; // back to name input
             return true;
         case KEY_DOWN:
+        case 'j':
             if (ls->account_count > 0) {
                 ls->cursor = 0;
                 curs_set(0);
             }
             return true;
         case KEY_LEFT:
+        case 'h':
             ls->type_sel = (ls->type_sel + ACCOUNT_TYPE_COUNT - 1) % ACCOUNT_TYPE_COUNT;
             return true;
         case KEY_RIGHT:
+        case 'l':
         case '\n':
             ls->type_sel = (ls->type_sel + 1) % ACCOUNT_TYPE_COUNT;
             return true;
