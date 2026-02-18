@@ -4,6 +4,7 @@
 #include "ui/txn_list.h"
 
 #include <ncurses.h>
+#include <locale.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -138,12 +139,6 @@ static void ui_draw_all(void) {
 static void ui_handle_input(int ch) {
     // When content is focused, delegate to the active content handler first
     if (state.content_focused) {
-        // LEFT / Escape always unfocus content
-        if (ch == KEY_LEFT || ch == 27) {
-            state.content_focused = false;
-            return;
-        }
-
         // Delegate to list handler; if it consumes the key, we're done
         if (state.current_screen == SCREEN_TRANSACTIONS && state.txn_list) {
             if (txn_list_handle_input(state.txn_list, state.content, ch))
@@ -152,6 +147,12 @@ static void ui_handle_input(int ch) {
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
             if (account_list_handle_input(state.account_list, ch))
                 return;
+        }
+
+        // LEFT / Escape unfocus content if not consumed above
+        if (ch == KEY_LEFT || ch == 27) {
+            state.content_focused = false;
+            return;
         }
 
         // Fall through for keys not consumed (q, a, KEY_RESIZE)
@@ -196,6 +197,7 @@ static void ui_handle_input(int ch) {
 }
 
 void ui_init(void) {
+    setlocale(LC_ALL, "");
     initscr();
     cbreak();
     noecho();

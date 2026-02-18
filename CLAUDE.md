@@ -76,8 +76,8 @@ make clean    # clean build artifacts
 - [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
 - [x] Add UI to add new accounts ([plan](../.claude/plans/stateless-wibbling-plum.md))
 - [x] Add a "Type" property to accounts (Cash, Checking, Savings, Credit Card, Physical Asset, Investment) ([plan](../.claude/plans/sequential-percolating-starlight.md))
-- [ ] Allow editing/deleting transactions
-- [ ] Fix error UI when adding an account with a name conflict
+- [x] Allow editing/deleting transactions
+- [x] Support sort and filter in transaction list ([plan](../.claude/plans/fluttering-shimmying-river.md))
 - [ ] Data import (CSV)
 - [ ] Summary/report views
 - [ ] Improve color theme
@@ -85,8 +85,8 @@ make clean    # clean build artifacts
 - [ ] Budget tracking
 - [ ] Recurring transactions
 - [ ] Show summary information in header
+- [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data export (CSV)
-- [ ] Support sort and filter in transaction list
 - [ ] Support split transactions
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
