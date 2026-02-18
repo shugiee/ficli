@@ -78,6 +78,9 @@ make clean    # clean build artifacts
 - [x] Add a "Type" property to accounts (Cash, Checking, Savings, Credit Card, Physical Asset, Investment) ([plan](../.claude/plans/sequential-percolating-starlight.md))
 - [x] Allow editing/deleting transactions
 - [x] Support sort and filter in transaction list ([plan](../.claude/plans/fluttering-shimmying-river.md))
+- [x] Allow hjkl navigation, matching arrow keys
+- [x] Show keyboard commands when user hits ?
+- [ ] Align table header row
 - [ ] Show summary information in header
 - [ ] Data import (CSV)
 - [ ] Summary/report views
@@ -96,5 +99,4 @@ make clean    # clean build artifacts
 - [ ] Allow user to choose whether to delete linked transfer transactions when deleting a transaction
 - [ ] Add error UI for handling logic mismatches, e.g. transfers with more than 2 transactions
 - [ ] Add popout for keyboard shortcuts reference
-- [ ] Allow hjkl navigation, matching arrow keys
 - [ ] Add CLI arguments for quick actions (e.g., `ficli add -a`)

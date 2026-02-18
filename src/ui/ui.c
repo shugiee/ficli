@@ -43,6 +43,62 @@ static struct {
     account_list_state_t *account_list;
 } state;
 
+typedef struct {
+    const char *key;   /* NULL = section header, "" = blank separator */
+    const char *desc;
+} help_row_t;
+
+static const help_row_t help_rows[] = {
+    { NULL, "Global" },
+    { "q",                  "Quit" },
+    { "a",                  "Add transaction" },
+    { "?",                  "This help" },
+
+    { "", "" },
+    { NULL, "Navigation (sidebar)" },
+    { "j / \u2193",         "Move down" },
+    { "k / \u2191",         "Move up" },
+    { "l / \u2192 / Enter", "Select / enter content" },
+    { "h / \u2190 / Esc",   "Back to sidebar" },
+
+    { "", "" },
+    { NULL, "Transactions list" },
+    { "e",                  "Edit selected" },
+    { "d",                  "Delete selected" },
+    { "/",                  "Filter" },
+    { "s",                  "Cycle sort column" },
+    { "S",                  "Toggle sort direction" },
+    { "g / Home",           "Jump to first" },
+    { "G / End",            "Jump to last" },
+    { "1-9",                "Switch account tab" },
+
+    { "", "" },
+    { NULL, "Filter mode (transactions)" },
+    { "type",               "Add to filter" },
+    { "Backspace",          "Remove character" },
+    { "Enter",              "Confirm filter" },
+    { "Esc",                "Clear and close filter" },
+
+    { "", "" },
+    { NULL, "Transaction form" },
+    { "Tab / \u2193",         "Next field" },
+    { "Shift+Tab / \u2191",   "Previous field" },
+    { "Ctrl+S",               "Save" },
+    { "Esc",                  "Cancel" },
+
+    { "", "" },
+    { NULL, "Accounts" },
+    { "Enter",              "Add account" },
+    { "\u2190 / \u2192",    "Change type" },
+};
+
+#define HELP_ROW_COUNT ((int)(sizeof(help_rows) / sizeof(help_rows[0])))
+
+#define HELP_WIN_W   52
+#define HELP_KEY_W   18
+/* desc width: 52 - 2(border) - 18(key) - 2(left pad + gap) - 1(right pad) = 29 */
+#define HELP_DESC_W  (HELP_WIN_W - 2 - HELP_KEY_W - 2 - 1)
+
 static void ui_create_layout(void) {
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
@@ -123,7 +179,7 @@ static void ui_draw_status(void) {
     } else if (state.content_focused && state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
         mvwprintw(state.status, 0, 1, "%s", account_list_status_hint(state.account_list));
     } else {
-        mvwprintw(state.status, 0, 1, "q:Quit  a:Add  \u2191\u2193:Navigate  Enter:Select");
+        mvwprintw(state.status, 0, 1, "q:Quit  a:Add  ?:Help  \u2191\u2193:Navigate  Enter:Select");
     }
     wnoutrefresh(state.status);
 }
@@ -134,6 +190,100 @@ static void ui_draw_all(void) {
     ui_draw_content();
     ui_draw_status();
     doupdate();
+}
+
+static void ui_show_help(void) {
+    int scr_rows, scr_cols;
+    getmaxyx(stdscr, scr_rows, scr_cols);
+
+    int win_h = HELP_ROW_COUNT + 2;   /* +2 for top/bottom border */
+    int max_h = scr_rows - 2;
+    if (max_h < 6) max_h = 6;
+    if (win_h > max_h) win_h = max_h;
+    int win_w = HELP_WIN_W;
+    if (win_w > scr_cols) win_w = scr_cols;
+
+    WINDOW *w = newwin(win_h, win_w,
+                       (scr_rows - win_h) / 2,
+                       (scr_cols - win_w) / 2);
+    keypad(w, TRUE);
+
+    /* Interior rows 1..win_h-2; footer printed in bottom border row */
+    int visible    = win_h - 2;
+    if (visible < 1) visible = 1;
+    int max_scroll = HELP_ROW_COUNT - visible;
+    if (max_scroll < 0) max_scroll = 0;
+
+    int  scroll = 0;
+    bool done   = false;
+
+    while (!done) {
+        werase(w);
+        wbkgd(w, COLOR_PAIR(10));   /* COLOR_FORM: white-on-blue */
+        box(w, 0, 0);
+
+        /* Title in top border */
+        const char *title = " Keyboard Shortcuts ";
+        mvwprintw(w, 0, (win_w - (int)strlen(title)) / 2, "%s", title);
+
+        /* Footer in bottom border (display-col counts used for centering) */
+        bool scrollable = (max_scroll > 0);
+        const char *footer;
+        int footer_cols;
+        if (scrollable) {
+            footer      = " j/\u2193 k/\u2191:Scroll  Any other key:Close ";
+            footer_cols = 38;   /* display columns, not byte count */
+        } else {
+            footer      = " Any key to close ";
+            footer_cols = 18;
+        }
+        int fx = (win_w - footer_cols) / 2;
+        if (fx < 1) fx = 1;
+        mvwprintw(w, win_h - 1, fx, "%s", footer);
+
+        /* Scroll indicators at col win_w-2 (right pad column, inside border) */
+        if (scroll > 0)
+            mvwprintw(w, 1, win_w - 2, "\u25b2");
+        if (scroll < max_scroll)
+            mvwprintw(w, win_h - 2, win_w - 2, "\u25bc");
+
+        /* Content rows */
+        for (int i = 0; i < visible; i++) {
+            int idx = scroll + i;
+            if (idx >= HELP_ROW_COUNT) break;
+            const help_row_t *r = &help_rows[idx];
+            int row = 1 + i;
+
+            if (r->key == NULL) {
+                wattron(w, A_BOLD);
+                mvwprintw(w, row, 2, "%-*.*s", win_w - 4, win_w - 4, r->desc);
+                wattroff(w, A_BOLD);
+            } else if (r->key[0] != '\0') {
+                mvwprintw(w, row, 2,
+                          "%-*.*s", HELP_KEY_W, HELP_KEY_W, r->key);
+                mvwprintw(w, row, 2 + HELP_KEY_W + 1,
+                          "%-*.*s", HELP_DESC_W, HELP_DESC_W, r->desc);
+            }
+            /* empty key string = blank row, nothing to draw */
+        }
+
+        wrefresh(w);
+
+        int ch = wgetch(w);
+        if (scrollable && (ch == KEY_DOWN || ch == 'j')) {
+            if (scroll < max_scroll) scroll++;
+        } else if (scrollable && (ch == KEY_UP || ch == 'k')) {
+            if (scroll > 0) scroll--;
+        } else {
+            done = true;
+        }
+    }
+
+    delwin(w);
+    touchwin(state.header);
+    touchwin(state.sidebar);
+    touchwin(state.content);
+    touchwin(state.status);
 }
 
 static void ui_handle_input(int ch) {
@@ -191,6 +341,9 @@ static void ui_handle_input(int ch) {
         touchwin(state.sidebar);
         touchwin(state.content);
         touchwin(state.status);
+        break;
+    case '?':
+        ui_show_help();
         break;
     case KEY_RESIZE:
         ui_destroy_layout();
