@@ -35,6 +35,8 @@ enum {
 typedef struct {
     WINDOW *win;
     sqlite3 *db;
+    transaction_t *txn;
+    bool is_edit;
 
     int current_field;
     bool dropdown_open;
@@ -43,6 +45,7 @@ typedef struct {
 
     // Type toggle
     transaction_type_t txn_type;
+    int64_t transfer_id;
 
     // Text fields
     char amount[32];
@@ -72,6 +75,9 @@ static void form_load_categories(form_state_t *fs) {
     fs->category_count = 0;
     fs->category_sel = 0;
 
+    if (fs->txn_type == TRANSACTION_TRANSFER)
+        return;
+
     category_type_t ctype = (fs->txn_type == TRANSACTION_INCOME)
         ? CATEGORY_INCOME : CATEGORY_EXPENSE;
     int count = db_get_categories(fs->db, ctype, &fs->categories);
@@ -80,9 +86,18 @@ static void form_load_categories(form_state_t *fs) {
     }
 }
 
-static void form_init_state(form_state_t *fs, sqlite3 *db) {
+static void format_amount_string(int64_t cents, char *buf, size_t buflen) {
+    int64_t abs_cents = cents < 0 ? -cents : cents;
+    int64_t whole = abs_cents / 100;
+    int64_t frac = abs_cents % 100;
+    snprintf(buf, buflen, "%ld.%02ld", (long)whole, (long)frac);
+}
+
+static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn, bool is_edit) {
     memset(fs, 0, sizeof(*fs));
     fs->db = db;
+    fs->txn = txn;
+    fs->is_edit = is_edit;
     fs->txn_type = TRANSACTION_EXPENSE;
 
     // Load accounts
@@ -90,9 +105,6 @@ static void form_init_state(form_state_t *fs, sqlite3 *db) {
     if (count > 0) {
         fs->account_count = count;
     }
-
-    // Load categories for current type
-    form_load_categories(fs);
 
     // Default date to today
     time_t now = time(NULL);
@@ -103,6 +115,41 @@ static void form_init_state(form_state_t *fs, sqlite3 *db) {
     memcpy(fs->date, datebuf, 10);
     fs->date[10] = '\0';
     fs->date_pos = 10;
+
+    if (is_edit && txn) {
+        fs->txn_type = txn->type;
+        fs->transfer_id = txn->transfer_id;
+        format_amount_string(txn->amount_cents, fs->amount, sizeof(fs->amount));
+        fs->amount_pos = (int)strlen(fs->amount);
+        if (txn->date[0] != '\0') {
+            snprintf(fs->date, sizeof(fs->date), "%s", txn->date);
+            fs->date_pos = (int)strlen(fs->date);
+        }
+        if (txn->description[0] != '\0') {
+            snprintf(fs->desc, sizeof(fs->desc), "%s", txn->description);
+            fs->desc_pos = (int)strlen(fs->desc);
+        }
+    }
+
+    // Load categories for current type
+    form_load_categories(fs);
+
+    if (is_edit && txn) {
+        for (int i = 0; i < fs->account_count; i++) {
+            if (fs->accounts[i].id == txn->account_id) {
+                fs->account_sel = i;
+                break;
+            }
+        }
+        if (fs->txn_type != TRANSACTION_TRANSFER && txn->category_id > 0) {
+            for (int i = 0; i < fs->category_count; i++) {
+                if (fs->categories[i].id == txn->category_id) {
+                    fs->category_sel = i;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 static void form_cleanup_state(form_state_t *fs) {
@@ -134,7 +181,7 @@ static void form_draw(form_state_t *fs) {
     box(w, 0, 0);
 
     // Title
-    const char *title = " Add Transaction ";
+    const char *title = fs->is_edit ? " Edit Transaction " : " Add Transaction ";
     int tw = (int)strlen(title);
     int ww = getmaxx(w);
     mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
@@ -157,8 +204,10 @@ static void form_draw(form_state_t *fs) {
         case FIELD_TYPE:
             if (fs->txn_type == TRANSACTION_EXPENSE)
                 mvwprintw(w, row, FIELD_COL, "< Expense >");
+            else if (fs->txn_type == TRANSACTION_INCOME)
+                mvwprintw(w, row, FIELD_COL, "< Income >");
             else
-                mvwprintw(w, row, FIELD_COL, "< Income  >");
+                mvwprintw(w, row, FIELD_COL, "< Transfer >");
             break;
         case FIELD_AMOUNT:
             mvwprintw(w, row, FIELD_COL, "%s", fs->amount);
@@ -171,11 +220,14 @@ static void form_draw(form_state_t *fs) {
                 mvwprintw(w, row, FIELD_COL, "(none)");
             break;
         case FIELD_CATEGORY:
-            if (fs->category_count > 0)
+            if (fs->txn_type == TRANSACTION_TRANSFER) {
+                mvwprintw(w, row, FIELD_COL, "(none)");
+            } else if (fs->category_count > 0) {
                 mvwprintw(w, row, FIELD_COL, "%s [v]",
                           fs->categories[fs->category_sel].name);
-            else
+            } else {
                 mvwprintw(w, row, FIELD_COL, "(none)");
+            }
             break;
         case FIELD_DATE:
             mvwprintw(w, row, FIELD_COL, "%s", fs->date);
@@ -294,6 +346,8 @@ static void form_open_dropdown(form_state_t *fs) {
         count = fs->account_count;
         sel = fs->account_sel;
     } else if (fs->current_field == FIELD_CATEGORY) {
+        if (fs->txn_type == TRANSACTION_TRANSFER)
+            return;
         count = fs->category_count;
         sel = fs->category_sel;
     }
@@ -318,6 +372,22 @@ static void form_close_dropdown(form_state_t *fs, bool accept) {
     }
     fs->dropdown_open = false;
     fs->dropdown_scroll = 0;
+}
+
+static transaction_type_t next_type(transaction_type_t type) {
+    if (type == TRANSACTION_EXPENSE)
+        return TRANSACTION_INCOME;
+    if (type == TRANSACTION_INCOME)
+        return TRANSACTION_TRANSFER;
+    return TRANSACTION_EXPENSE;
+}
+
+static transaction_type_t prev_type(transaction_type_t type) {
+    if (type == TRANSACTION_EXPENSE)
+        return TRANSACTION_TRANSFER;
+    if (type == TRANSACTION_INCOME)
+        return TRANSACTION_EXPENSE;
+    return TRANSACTION_INCOME;
 }
 
 // Parse amount string to cents. Returns -1 on invalid input.
@@ -392,20 +462,43 @@ static bool form_validate_and_save(form_state_t *fs) {
 
     // Build transaction
     transaction_t txn = {0};
+    if (fs->is_edit && fs->txn)
+        txn.id = fs->txn->id;
     txn.amount_cents = cents;
     txn.type = fs->txn_type;
     if (fs->account_count > 0)
         txn.account_id = fs->accounts[fs->account_sel].id;
-    if (fs->category_count > 0)
+    if (fs->txn_type != TRANSACTION_TRANSFER && fs->category_count > 0)
         txn.category_id = fs->categories[fs->category_sel].id;
     snprintf(txn.date, sizeof(txn.date), "%s", fs->date);
     snprintf(txn.description, sizeof(txn.description), "%s", fs->desc);
 
-    int64_t row_id = db_insert_transaction(fs->db, &txn);
-    if (row_id < 0) {
-        snprintf(fs->error, sizeof(fs->error), "Database error");
-        return false;
+    if (fs->is_edit) {
+        if (fs->txn_type == TRANSACTION_TRANSFER)
+            txn.transfer_id = fs->transfer_id;
+        else
+            txn.transfer_id = 0;
+
+        int rc = db_update_transaction(fs->db, &txn);
+        if (rc == -2) {
+            snprintf(fs->error, sizeof(fs->error), "Transaction not found");
+            return false;
+        }
+        if (rc < 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+    } else {
+        int64_t row_id = db_insert_transaction(fs->db, &txn);
+        if (row_id < 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+        txn.id = row_id;
     }
+
+    if (fs->txn)
+        *fs->txn = txn;
 
     return true;
 }
@@ -457,7 +550,7 @@ static void handle_date_input(char *buf, int *pos, int ch) {
     }
 }
 
-form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
+form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, bool is_edit) {
     int ph, pw;
     getmaxyx(parent, ph, pw);
 
@@ -467,7 +560,7 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
     }
 
     form_state_t fs;
-    form_init_state(&fs, db);
+    form_init_state(&fs, db, txn, is_edit);
 
     // Center the form over the parent content window
     int start_y, start_x;
@@ -542,7 +635,9 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
                 }
             } else if (fs.current_field == FIELD_ACCOUNT ||
                        fs.current_field == FIELD_CATEGORY) {
-                form_open_dropdown(&fs);
+                if (!(fs.current_field == FIELD_CATEGORY &&
+                      fs.txn_type == TRANSACTION_TRANSFER))
+                    form_open_dropdown(&fs);
             }
             break;
 
@@ -553,12 +648,13 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
                     done = true;
                 }
             } else if (fs.current_field == FIELD_TYPE) {
-                fs.txn_type = (fs.txn_type == TRANSACTION_EXPENSE)
-                    ? TRANSACTION_INCOME : TRANSACTION_EXPENSE;
+                fs.txn_type = next_type(fs.txn_type);
                 form_load_categories(&fs);
             } else if (fs.current_field == FIELD_ACCOUNT ||
                        fs.current_field == FIELD_CATEGORY) {
-                form_open_dropdown(&fs);
+                if (!(fs.current_field == FIELD_CATEGORY &&
+                      fs.txn_type == TRANSACTION_TRANSFER))
+                    form_open_dropdown(&fs);
             } else if (fs.current_field == FIELD_DESC) {
                 handle_text_input(fs.desc, &fs.desc_pos,
                                   (int)sizeof(fs.desc), ch, false);
@@ -567,7 +663,7 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
 
         case KEY_LEFT:
             if (fs.current_field == FIELD_TYPE) {
-                fs.txn_type = TRANSACTION_EXPENSE;
+                fs.txn_type = prev_type(fs.txn_type);
                 form_load_categories(&fs);
             } else if (fs.current_field == FIELD_AMOUNT) {
                 handle_text_input(fs.amount, &fs.amount_pos,
@@ -582,7 +678,7 @@ form_result_t form_add_transaction(sqlite3 *db, WINDOW *parent) {
 
         case KEY_RIGHT:
             if (fs.current_field == FIELD_TYPE) {
-                fs.txn_type = TRANSACTION_INCOME;
+                fs.txn_type = next_type(fs.txn_type);
                 form_load_categories(&fs);
             } else if (fs.current_field == FIELD_AMOUNT) {
                 handle_text_input(fs.amount, &fs.amount_pos,

@@ -1,5 +1,6 @@
 #include "ui/txn_list.h"
 #include "db/query.h"
+#include "ui/form.h"
 #include "models/account.h"
 
 #include <stdlib.h>
@@ -33,6 +34,55 @@ struct txn_list_state {
     int scroll_offset;
     bool dirty;
 };
+
+static bool confirm_delete(WINDOW *parent) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+
+    int win_h = 7;
+    int win_w = 42;
+    if (ph < win_h) win_h = ph;
+    if (pw < win_w) win_w = pw;
+    if (win_h < 4 || win_w < 20)
+        return false;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    int win_y = py + (ph - win_h) / 2;
+    int win_x = px + (pw - win_w) / 2;
+
+    WINDOW *w = newwin(win_h, win_w, win_y, win_x);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(10));
+    box(w, 0, 0);
+
+    mvwprintw(w, 1, 2, "Delete transaction?");
+    mvwprintw(w, win_h - 2, 2, "y:Delete  n:Cancel");
+    wrefresh(w);
+
+    bool confirm = false;
+    bool done = false;
+    while (!done) {
+        int ch = wgetch(w);
+        switch (ch) {
+        case 'y':
+        case 'Y':
+            confirm = true;
+            done = true;
+            break;
+        case 'n':
+        case 'N':
+        case 27:
+            confirm = false;
+            done = true;
+            break;
+        }
+    }
+
+    delwin(w);
+    touchwin(parent);
+    return confirm;
+}
 
 static void reload(txn_list_state_t *ls) {
     free(ls->transactions);
@@ -219,7 +269,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     }
 }
 
-bool txn_list_handle_input(txn_list_state_t *ls, int ch) {
+bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
     int visible_rows = 20; // will be corrected by draw, but we need a sensible default
 
     switch (ch) {
@@ -247,6 +297,35 @@ bool txn_list_handle_input(txn_list_state_t *ls, int ch) {
         ls->cursor += visible_rows;
         if (ls->cursor >= ls->txn_count) ls->cursor = ls->txn_count > 0 ? ls->txn_count - 1 : 0;
         return true;
+    case 'e':
+        if (ls->txn_count <= 0)
+            return true;
+        {
+            transaction_t txn = {0};
+            int rc = db_get_transaction_by_id(ls->db, (int)ls->transactions[ls->cursor].id, &txn);
+            if (rc == 0) {
+                form_result_t res = form_transaction(parent, ls->db, &txn, true);
+                if (res == FORM_SAVED)
+                    ls->dirty = true;
+            } else {
+                ls->dirty = true;
+            }
+        }
+        return true;
+    case 'd':
+        if (ls->txn_count <= 0)
+            return true;
+        if (confirm_delete(parent)) {
+            int rc = db_delete_transaction(ls->db, (int)ls->transactions[ls->cursor].id);
+            if (rc == 0) {
+                if (ls->cursor > 0)
+                    ls->cursor--;
+                ls->dirty = true;
+            } else if (rc == -2) {
+                ls->dirty = true;
+            }
+        }
+        return true;
     default:
         // Account switching: '1'-'9'
         if (ch >= '1' && ch <= '9') {
@@ -262,8 +341,9 @@ bool txn_list_handle_input(txn_list_state_t *ls, int ch) {
 }
 
 const char *txn_list_status_hint(const txn_list_state_t *ls) {
-    (void)ls;
-    return "q:Quit  a:Add  \u2191\u2193:Scroll  1-9:Account  \u2190:Sidebar";
+    if (ls->txn_count > 0)
+        return "\u2191\u2193 move  1-9 account  e edit  d delete  a add  \u2190 back";
+    return "\u2191\u2193 move  1-9 account  a add  \u2190 back";
 }
 
 void txn_list_mark_dirty(txn_list_state_t *ls) {

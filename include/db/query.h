@@ -20,6 +20,15 @@ int db_get_categories(sqlite3 *db, category_type_t type, category_t **out);
 // Insert a transaction. Returns new row id, -1 on error.
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn);
 
+// Fetch a full transaction by id. Returns 0 success, -2 not found, -1 error.
+int db_get_transaction_by_id(sqlite3 *db, int txn_id, transaction_t *out);
+
+// Update a transaction. Returns 0 success, -2 not found, -1 error.
+int db_update_transaction(sqlite3 *db, const transaction_t *txn);
+
+// Delete a transaction (and transfer pair if present). Returns 0 success, -2 not found, -1 error.
+int db_delete_transaction(sqlite3 *db, int txn_id);
+
 // Lightweight row for transaction list display.
 typedef struct {
     int64_t id;

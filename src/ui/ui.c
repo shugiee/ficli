@@ -146,7 +146,7 @@ static void ui_handle_input(int ch) {
 
         // Delegate to list handler; if it consumes the key, we're done
         if (state.current_screen == SCREEN_TRANSACTIONS && state.txn_list) {
-            if (txn_list_handle_input(state.txn_list, ch))
+            if (txn_list_handle_input(state.txn_list, state.content, ch))
                 return;
         }
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
@@ -177,9 +177,12 @@ static void ui_handle_input(int ch) {
             state.content_focused = true;
         break;
     case 'a':
-        form_add_transaction(state.db, state.content);
-        if (state.txn_list)
-            txn_list_mark_dirty(state.txn_list);
+        {
+            transaction_t txn = {0};
+            form_result_t res = form_transaction(state.content, state.db, &txn, false);
+            if (res == FORM_SAVED && state.txn_list)
+                txn_list_mark_dirty(state.txn_list);
+        }
         touchwin(state.header);
         touchwin(state.sidebar);
         touchwin(state.content);

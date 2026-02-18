@@ -76,7 +76,6 @@ make clean    # clean build artifacts
 - [x] Transaction list view per account ([plan](../.claude/plans/buzzing-growing-fog.md))
 - [x] Add UI to add new accounts ([plan](../.claude/plans/stateless-wibbling-plum.md))
 - [x] Add a "Type" property to accounts (Cash, Checking, Savings, Credit Card, Physical Asset, Investment) ([plan](../.claude/plans/sequential-percolating-starlight.md))
-- [ ] Support split transactions
 - [ ] Allow editing/deleting transactions
 - [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data import (CSV)
@@ -88,6 +87,7 @@ make clean    # clean build artifacts
 - [ ] Show summary information in header
 - [ ] Data export (CSV)
 - [ ] Support sort and filter in transaction list
+- [ ] Support split transactions
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
@@ -95,4 +95,7 @@ make clean    # clean build artifacts
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption
 - [ ] Support auto-categorization
-
+- [ ] Allow user to choose whether to delete linked transfer transactions when deleting a transaction
+- [ ] Add error UI for handling logic mismatches, e.g. transfers with more than 2 transactions
+- [ ] Add popout for keyboard shortcuts reference
+- [ ] Allow hjkl navigation, matching arrow keys
