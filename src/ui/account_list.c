@@ -1,4 +1,5 @@
 #include "ui/account_list.h"
+#include "ui/colors.h"
 #include "db/query.h"
 #include "models/account.h"
 
@@ -6,8 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Color pair IDs — must match ui.c definitions
-#define COLOR_SELECTED 2
 
 // Display labels for account types (indexes match account_type_t enum)
 static const char *account_type_labels[] = {"Cash",           "Checking",

@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 #include "ui/account_list.h"
+#include "ui/colors.h"
 #include "ui/form.h"
 #include "ui/txn_list.h"
 
@@ -11,14 +12,6 @@
 
 #define SIDEBAR_WIDTH 18
 
-enum {
-    COLOR_HEADER = 1,
-    COLOR_SELECTED,
-    COLOR_STATUS,
-    // 10, 11 reserved for form colors
-    COLOR_EXPENSE = 12,
-    COLOR_INCOME = 13
-};
 
 static const char *menu_labels[SCREEN_COUNT] = {"Dashboard",  "Transactions",
                                                 "Categories", "Budgets",
@@ -106,6 +99,10 @@ static void ui_create_layout(void) {
     state.sidebar = newwin(content_h, SIDEBAR_WIDTH, 1, 0);
     state.content = newwin(content_h, content_w, 1, SIDEBAR_WIDTH);
     state.status = newwin(1, cols, rows - 1, 0);
+
+    wbkgd(stdscr, COLOR_PAIR(COLOR_NORMAL));
+    wbkgd(state.sidebar, COLOR_PAIR(COLOR_NORMAL));
+    wbkgd(state.content, COLOR_PAIR(COLOR_NORMAL));
 }
 
 static void ui_destroy_layout(void) {
@@ -228,7 +225,7 @@ static void ui_show_help(void) {
 
     while (!done) {
         werase(w);
-        wbkgd(w, COLOR_PAIR(10)); /* COLOR_FORM: white-on-blue */
+        wbkgd(w, COLOR_PAIR(COLOR_FORM));
         box(w, 0, 0);
 
         /* Title in top border */
@@ -379,14 +376,27 @@ void ui_init(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &term);
 
     start_color();
-    use_default_colors();
-    init_pair(COLOR_HEADER, COLOR_BLACK, COLOR_CYAN);
-    init_pair(COLOR_SELECTED, COLOR_BLACK, COLOR_WHITE);
-    init_pair(COLOR_STATUS, COLOR_BLACK, COLOR_CYAN);
-    init_pair(10, COLOR_WHITE, COLOR_BLUE); // COLOR_FORM
-    init_pair(11, COLOR_BLACK, COLOR_CYAN); // COLOR_FORM_ACTIVE
-    init_pair(COLOR_EXPENSE, COLOR_RED, -1);
-    init_pair(COLOR_INCOME, COLOR_GREEN, -1);
+
+// Scale an 8-bit hex component to ncurses 0-1000 range
+#define HEX_NC(v) ((v) * 1000 / 255)
+    init_color(CUST_BG,     HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
+    init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
+    init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
+    init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
+    init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
+    init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
+    init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
+    init_color(CUST_FG,     HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
+#undef HEX_NC
+
+    init_pair(COLOR_NORMAL,      CUST_FG,    CUST_BG);
+    init_pair(COLOR_HEADER,      CUST_BG,    CUST_BLUE);
+    init_pair(COLOR_SELECTED,    CUST_BG,    CUST_FG);
+    init_pair(COLOR_STATUS,      CUST_BG,    CUST_BLUE);
+    init_pair(COLOR_FORM,        CUST_BG,    CUST_FG);
+    init_pair(COLOR_FORM_ACTIVE, CUST_BG,    CUST_AQUA);
+    init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
+    init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
 }
 
 void ui_cleanup(void) { endwin(); }

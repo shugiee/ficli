@@ -1,4 +1,5 @@
 #include "ui/form.h"
+#include "ui/colors.h"
 #include "db/query.h"
 #include "models/account.h"
 #include "models/category.h"
@@ -27,7 +28,6 @@ enum {
     FIELD_COUNT
 };
 
-enum { COLOR_FORM = 10, COLOR_FORM_ACTIVE };
 
 typedef struct {
     WINDOW *win;

@@ -82,17 +82,19 @@ make clean    # clean build artifacts
 - [x] Allow hjkl navigation, matching arrow keys
 - [x] Show keyboard commands when user hits ?
 - [x] Align table header row
-- [ ] Add row indices to transaction list
+- [x] Improve color theme
+- [ ] Handle window resizing
+- [ ] Allow toggling light/dark mode
 - [ ] Show summary information in header
-- [ ] Data import (CSV)
 - [ ] Summary/report views
-- [ ] Improve color theme
 - [ ] Show chart of account balance over time
 - [ ] Category management
 - [ ] Budget tracking
 - [ ] Fix error UI when adding an account with a name conflict
 - [ ] Data export (CSV)
 - [ ] Support split transactions
+- [ ] Data import (CSV)
+- [ ] Add row indices to transaction list
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking

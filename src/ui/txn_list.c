@@ -1,4 +1,5 @@
 #include "ui/txn_list.h"
+#include "ui/colors.h"
 #include "db/query.h"
 #include "models/account.h"
 #include "ui/form.h"
@@ -7,10 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Color pair IDs — must match ui.c definitions
-#define COLOR_SELECTED 2
-#define COLOR_EXPENSE 12
-#define COLOR_INCOME 13
 
 #define GAP_WIDTH 3
 #define DATE_COL_WIDTH 12
@@ -85,7 +82,7 @@ static bool confirm_delete(WINDOW *parent) {
 
     WINDOW *w = newwin(win_h, win_w, win_y, win_x);
     keypad(w, TRUE);
-    wbkgd(w, COLOR_PAIR(10));
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
     box(w, 0, 0);
 
     mvwprintw(w, 1, 2, "Delete transaction?");
