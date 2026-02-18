@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -std=c2x
+    - -Iinclude
+    - -D_DEFAULT_SOURCE
+    - -D_XOPEN_SOURCE=600
+    - -Wall
+    - -Wextra

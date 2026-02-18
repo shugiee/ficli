@@ -375,7 +375,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     mvwprintw(win, 3, 2, "%-*s", DATE_COL_WIDTH, "Date");
     mvwprintw(win, 3, 17, "%-*s", TYPE_COL_WIDTH, "Type");
     mvwprintw(win, 3, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
-    mvwprintw(win, 3, 47, "%*3s", AMOUNT_COL_WIDTH, "Amount");
+    mvwprintw(win, 3, 47, "%-*s", AMOUNT_COL_WIDTH, "Amount");
     mvwprintw(win, 3, 63, "%-*s", desc_w, "Description");
     switch (ls->sort_col) {
     case SORT_DATE:

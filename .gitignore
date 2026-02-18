@@ -1,3 +1,6 @@
 build/
+.cache/
 ficli
 *.o
+compile_commands.json
+ficli_seed.sql

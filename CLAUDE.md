@@ -67,6 +67,7 @@ make clean    # clean build artifacts
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
 - **Schema versioning:** `schema_version` table for migrations (currently version 2)
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
+- **Seed backup file** flicli_seed.sql. To use it: `sqlite3 ~/.local/share/ficli/ficli.db < ficli_seed.sql`
 
 ## Status
 - [x] Project scaffolding and build system
@@ -80,7 +81,8 @@ make clean    # clean build artifacts
 - [x] Support sort and filter in transaction list ([plan](../.claude/plans/fluttering-shimmying-river.md))
 - [x] Allow hjkl navigation, matching arrow keys
 - [x] Show keyboard commands when user hits ?
-- [ ] Align table header row
+- [x] Align table header row
+- [ ] Add row indices to transaction list
 - [ ] Show summary information in header
 - [ ] Data import (CSV)
 - [ ] Summary/report views
