@@ -111,6 +111,148 @@ int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type, co
     return sqlite3_last_insert_rowid(db);
 }
 
+int db_update_account(sqlite3 *db, const account_t *account) {
+    if (!account)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "UPDATE accounts SET name = ?, type = ?, card_last4 = ? WHERE id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_update_account prepare: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, account->name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, account_type_db_strings[account->type], -1,
+                      SQLITE_STATIC);
+    if (account->type == ACCOUNT_CREDIT_CARD && account->card_last4[0] != '\0')
+        sqlite3_bind_text(stmt, 3, account->card_last4, -1, SQLITE_STATIC);
+    else
+        sqlite3_bind_null(stmt, 3);
+    sqlite3_bind_int64(stmt, 4, account->id);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_update_account step: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    return 0;
+}
+
+int db_count_transactions_for_account(sqlite3 *db, int64_t account_id) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db, "SELECT COUNT(*) FROM transactions WHERE account_id = ?", -1, &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_count_transactions_for_account prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_count_transactions_for_account step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+int db_delete_account(sqlite3 *db, int64_t account_id, bool delete_transactions) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM accounts WHERE id = ?", -1,
+                                &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_account prepare exists: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return -2;
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_delete_account step exists: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int txn_count = db_count_transactions_for_account(db, account_id);
+    if (txn_count < 0)
+        return -1;
+    if (txn_count > 0 && !delete_transactions)
+        return -3;
+
+    rc = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_account begin: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    if (delete_transactions && txn_count > 0) {
+        rc = sqlite3_prepare_v2(db, "DELETE FROM transactions WHERE account_id = ?",
+                                -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "db_delete_account prepare txns: %s\n",
+                    sqlite3_errmsg(db));
+            sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
+        sqlite3_bind_int64(stmt, 1, account_id);
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        stmt = NULL;
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "db_delete_account step txns: %s\n", sqlite3_errmsg(db));
+            sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
+    }
+
+    rc = sqlite3_prepare_v2(db, "DELETE FROM accounts WHERE id = ?", -1, &stmt,
+                            NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_account prepare account: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_delete_account step account: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+
+    if (sqlite3_changes(db) == 0) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -2;
+    }
+
+    rc = sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_account commit: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+
+    return 0;
+}
+
 int db_get_categories(sqlite3 *db, category_type_t type, category_t **out) {
     *out = NULL;
 

@@ -574,6 +574,357 @@ static void handle_date_input(char *buf, int *pos, int ch) {
     }
 }
 
+#define ACCOUNT_FORM_WIDTH 50
+#define ACCOUNT_FORM_HEIGHT 13
+
+enum {
+    ACCOUNT_FIELD_NAME,
+    ACCOUNT_FIELD_TYPE,
+    ACCOUNT_FIELD_CARD,
+    ACCOUNT_FIELD_SUBMIT,
+    ACCOUNT_FIELD_COUNT
+};
+
+typedef struct {
+    WINDOW *win;
+    sqlite3 *db;
+    account_t *account;
+    bool is_edit;
+
+    int current_field;
+    char name[64];
+    int name_pos;
+    account_type_t type;
+    char card_last4[5];
+    int card_last4_pos;
+    char error[64];
+} account_form_state_t;
+
+static const char *account_type_labels[] = {"Cash",           "Checking",
+                                            "Savings",        "Credit Card",
+                                            "Physical Asset", "Investment"};
+
+static account_type_t next_account_type(account_type_t type) {
+    return (account_type_t)((type + 1) % ACCOUNT_TYPE_COUNT);
+}
+
+static account_type_t prev_account_type(account_type_t type) {
+    return (account_type_t)((type + ACCOUNT_TYPE_COUNT - 1) % ACCOUNT_TYPE_COUNT);
+}
+
+static int account_field_row(int field) { return 2 + field * 2; }
+
+static void account_form_clamp_field(account_form_state_t *fs) {
+    if (fs->type != ACCOUNT_CREDIT_CARD && fs->current_field == ACCOUNT_FIELD_CARD)
+        fs->current_field = ACCOUNT_FIELD_SUBMIT;
+}
+
+static void account_form_next_field(account_form_state_t *fs) {
+    if (fs->current_field >= ACCOUNT_FIELD_COUNT - 1)
+        return;
+    fs->current_field++;
+    account_form_clamp_field(fs);
+}
+
+static void account_form_prev_field(account_form_state_t *fs) {
+    if (fs->current_field <= 0)
+        return;
+    fs->current_field--;
+    if (fs->type != ACCOUNT_CREDIT_CARD &&
+        fs->current_field == ACCOUNT_FIELD_CARD) {
+        fs->current_field = ACCOUNT_FIELD_TYPE;
+    }
+}
+
+static void account_form_init(account_form_state_t *fs, sqlite3 *db,
+                              account_t *account, bool is_edit) {
+    memset(fs, 0, sizeof(*fs));
+    fs->db = db;
+    fs->account = account;
+    fs->is_edit = is_edit;
+    fs->type = ACCOUNT_CASH;
+    fs->current_field = ACCOUNT_FIELD_NAME;
+
+    if (is_edit && account) {
+        snprintf(fs->name, sizeof(fs->name), "%s", account->name);
+        fs->name_pos = (int)strlen(fs->name);
+        fs->type = account->type;
+        snprintf(fs->card_last4, sizeof(fs->card_last4), "%s",
+                 account->card_last4);
+        fs->card_last4_pos = (int)strlen(fs->card_last4);
+    }
+}
+
+static void account_form_draw(account_form_state_t *fs) {
+    WINDOW *w = fs->win;
+    werase(w);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+
+    const char *title = fs->is_edit ? " Edit Account " : " Add Account ";
+    int tw = (int)strlen(title);
+    int ww = getmaxx(w);
+    mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
+
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_NAME), LABEL_COL, "Name:");
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_TYPE), LABEL_COL, "Type:");
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_CARD), LABEL_COL, "Card last 4:");
+
+    bool name_active = (fs->current_field == ACCOUNT_FIELD_NAME);
+    if (name_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_NAME), FIELD_COL, "%-*s",
+              FIELD_WIDTH, "");
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_NAME), FIELD_COL, "%s", fs->name);
+    if (name_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    bool type_active = (fs->current_field == ACCOUNT_FIELD_TYPE);
+    if (type_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_TYPE), FIELD_COL, "%-*s",
+              FIELD_WIDTH, "");
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_TYPE), FIELD_COL, "< %-16s >",
+              account_type_labels[fs->type]);
+    if (type_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    bool card_active =
+        (fs->current_field == ACCOUNT_FIELD_CARD && fs->type == ACCOUNT_CREDIT_CARD);
+    if (card_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_CARD), FIELD_COL, "%-*s",
+              FIELD_WIDTH, "");
+    if (fs->type == ACCOUNT_CREDIT_CARD) {
+        mvwprintw(w, account_field_row(ACCOUNT_FIELD_CARD), FIELD_COL, "%-4s",
+                  fs->card_last4);
+    } else {
+        wattron(w, A_DIM);
+        mvwprintw(w, account_field_row(ACCOUNT_FIELD_CARD), FIELD_COL, "(n/a)");
+        wattroff(w, A_DIM);
+    }
+    if (card_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    const char *btn = "[ Submit ]";
+    int btn_len = (int)strlen(btn);
+    bool submit_active = (fs->current_field == ACCOUNT_FIELD_SUBMIT);
+    if (submit_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    mvwprintw(w, account_field_row(ACCOUNT_FIELD_SUBMIT), (ww - btn_len) / 2,
+              "%s", btn);
+    if (submit_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+
+    if (fs->error[0] != '\0') {
+        wattron(w, A_BOLD);
+        mvwprintw(w, ACCOUNT_FORM_HEIGHT - 2, LABEL_COL, "%s", fs->error);
+        wattroff(w, A_BOLD);
+    }
+
+    mvwprintw(w, ACCOUNT_FORM_HEIGHT - 1, 2, " C-s:Save  Esc:Cancel ");
+
+    if (fs->current_field == ACCOUNT_FIELD_SUBMIT) {
+        curs_set(0);
+    } else {
+        curs_set(1);
+        if (fs->current_field == ACCOUNT_FIELD_NAME) {
+            wmove(w, account_field_row(ACCOUNT_FIELD_NAME), FIELD_COL + fs->name_pos);
+        } else if (fs->current_field == ACCOUNT_FIELD_TYPE) {
+            wmove(w, account_field_row(ACCOUNT_FIELD_TYPE), FIELD_COL);
+        } else if (fs->current_field == ACCOUNT_FIELD_CARD &&
+                   fs->type == ACCOUNT_CREDIT_CARD) {
+            wmove(w, account_field_row(ACCOUNT_FIELD_CARD),
+                  FIELD_COL + fs->card_last4_pos);
+        } else {
+            wmove(w, account_field_row(ACCOUNT_FIELD_CARD), FIELD_COL);
+        }
+    }
+
+    wrefresh(w);
+}
+
+static void account_handle_card_input(account_form_state_t *fs, int ch) {
+    int len = (int)strlen(fs->card_last4);
+
+    if (ch == KEY_LEFT) {
+        if (fs->card_last4_pos > 0)
+            fs->card_last4_pos--;
+    } else if (ch == KEY_RIGHT) {
+        if (fs->card_last4_pos < len)
+            fs->card_last4_pos++;
+    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        if (fs->card_last4_pos > 0) {
+            memmove(&fs->card_last4[fs->card_last4_pos - 1],
+                    &fs->card_last4[fs->card_last4_pos],
+                    len - fs->card_last4_pos + 1);
+            fs->card_last4_pos--;
+        }
+    } else if (isdigit(ch) && len < 4) {
+        memmove(&fs->card_last4[fs->card_last4_pos + 1],
+                &fs->card_last4[fs->card_last4_pos],
+                len - fs->card_last4_pos + 1);
+        fs->card_last4[fs->card_last4_pos] = (char)ch;
+        fs->card_last4_pos++;
+    }
+}
+
+static bool account_form_validate_and_save(account_form_state_t *fs) {
+    fs->error[0] = '\0';
+
+    if (fs->name[0] == '\0') {
+        snprintf(fs->error, sizeof(fs->error), "Name cannot be empty");
+        fs->current_field = ACCOUNT_FIELD_NAME;
+        return false;
+    }
+
+    account_t updated = {0};
+    if (fs->is_edit && fs->account)
+        updated.id = fs->account->id;
+    updated.type = fs->type;
+    snprintf(updated.name, sizeof(updated.name), "%s", fs->name);
+    if (updated.type == ACCOUNT_CREDIT_CARD) {
+        snprintf(updated.card_last4, sizeof(updated.card_last4), "%s",
+                 fs->card_last4);
+    }
+
+    if (fs->is_edit) {
+        if (db_update_account(fs->db, &updated) < 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+    } else {
+        int64_t id = db_insert_account(fs->db, updated.name, updated.type,
+                                       updated.card_last4);
+        if (id < 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+        updated.id = id;
+    }
+
+    if (fs->account)
+        *fs->account = updated;
+    return true;
+}
+
+form_result_t form_account(WINDOW *parent, sqlite3 *db, account_t *account,
+                           bool is_edit) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    if (ph < ACCOUNT_FORM_HEIGHT || pw < ACCOUNT_FORM_WIDTH)
+        return FORM_CANCELLED;
+
+    account_form_state_t fs;
+    account_form_init(&fs, db, account, is_edit);
+
+    int start_y, start_x;
+    getbegyx(parent, start_y, start_x);
+    int form_y = start_y + (ph - ACCOUNT_FORM_HEIGHT) / 2;
+    int form_x = start_x + (pw - ACCOUNT_FORM_WIDTH) / 2;
+    fs.win = newwin(ACCOUNT_FORM_HEIGHT, ACCOUNT_FORM_WIDTH, form_y, form_x);
+    keypad(fs.win, TRUE);
+    curs_set(1);
+
+    form_result_t result = FORM_CANCELLED;
+    bool done = false;
+    while (!done) {
+        account_form_draw(&fs);
+        int ch = wgetch(fs.win);
+        fs.error[0] = '\0';
+
+        switch (ch) {
+        case 27:
+            done = true;
+            break;
+        case 19: // Ctrl+S
+            if (account_form_validate_and_save(&fs)) {
+                result = FORM_SAVED;
+                done = true;
+            }
+            break;
+        case '\t':
+        case KEY_DOWN:
+            account_form_next_field(&fs);
+            break;
+        case KEY_BTAB:
+        case KEY_UP:
+            account_form_prev_field(&fs);
+            break;
+        case '\n':
+        case ' ':
+            if (fs.current_field == ACCOUNT_FIELD_SUBMIT) {
+                if (account_form_validate_and_save(&fs)) {
+                    result = FORM_SAVED;
+                    done = true;
+                }
+            } else if (fs.current_field == ACCOUNT_FIELD_TYPE) {
+                fs.type = next_account_type(fs.type);
+                if (fs.type != ACCOUNT_CREDIT_CARD) {
+                    fs.card_last4[0] = '\0';
+                    fs.card_last4_pos = 0;
+                    account_form_clamp_field(&fs);
+                }
+            } else if (fs.current_field == ACCOUNT_FIELD_NAME) {
+                handle_text_input(fs.name, &fs.name_pos, (int)sizeof(fs.name), ch,
+                                  false);
+            } else if (fs.current_field == ACCOUNT_FIELD_CARD &&
+                       fs.type == ACCOUNT_CREDIT_CARD) {
+                account_handle_card_input(&fs, ch);
+            }
+            break;
+        case KEY_LEFT:
+            if (fs.current_field == ACCOUNT_FIELD_TYPE) {
+                fs.type = prev_account_type(fs.type);
+                if (fs.type != ACCOUNT_CREDIT_CARD) {
+                    fs.card_last4[0] = '\0';
+                    fs.card_last4_pos = 0;
+                    account_form_clamp_field(&fs);
+                }
+            } else if (fs.current_field == ACCOUNT_FIELD_NAME) {
+                handle_text_input(fs.name, &fs.name_pos, (int)sizeof(fs.name), ch,
+                                  false);
+            } else if (fs.current_field == ACCOUNT_FIELD_CARD &&
+                       fs.type == ACCOUNT_CREDIT_CARD) {
+                account_handle_card_input(&fs, ch);
+            }
+            break;
+        case KEY_RIGHT:
+            if (fs.current_field == ACCOUNT_FIELD_TYPE) {
+                fs.type = next_account_type(fs.type);
+                if (fs.type != ACCOUNT_CREDIT_CARD) {
+                    fs.card_last4[0] = '\0';
+                    fs.card_last4_pos = 0;
+                    account_form_clamp_field(&fs);
+                }
+            } else if (fs.current_field == ACCOUNT_FIELD_NAME) {
+                handle_text_input(fs.name, &fs.name_pos, (int)sizeof(fs.name), ch,
+                                  false);
+            } else if (fs.current_field == ACCOUNT_FIELD_CARD &&
+                       fs.type == ACCOUNT_CREDIT_CARD) {
+                account_handle_card_input(&fs, ch);
+            }
+            break;
+        case KEY_RESIZE:
+            done = true;
+            break;
+        default:
+            if (fs.current_field == ACCOUNT_FIELD_NAME) {
+                handle_text_input(fs.name, &fs.name_pos, (int)sizeof(fs.name), ch,
+                                  false);
+            } else if (fs.current_field == ACCOUNT_FIELD_CARD &&
+                       fs.type == ACCOUNT_CREDIT_CARD) {
+                account_handle_card_input(&fs, ch);
+            }
+            break;
+        }
+    }
+
+    curs_set(0);
+    delwin(fs.win);
+    return result;
+}
+
 form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                bool is_edit) {
     int ph, pw;

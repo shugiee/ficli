@@ -85,6 +85,8 @@ static const help_row_t help_rows[] = {
     {"", ""},
     {NULL, "Accounts"},
     {"Enter", "Add account"},
+    {"e", "Edit selected account"},
+    {"d", "Delete selected account"},
     {"\u2190 / \u2192", "Change type"},
 };
 
@@ -445,8 +447,8 @@ static void ui_handle_input(int ch) {
                 return;
         }
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
-            if (account_list_handle_input(state.account_list, ch)) {
-                if (account_list_consume_added(state.account_list) &&
+            if (account_list_handle_input(state.account_list, state.content, ch)) {
+                if (account_list_consume_changed(state.account_list) &&
                     state.txn_list) {
                     txn_list_mark_dirty(state.txn_list);
                 }

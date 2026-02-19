@@ -2,8 +2,10 @@
 #include "db/query.h"
 #include "models/account.h"
 #include "ui/colors.h"
+#include "ui/form.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,8 +40,71 @@ struct account_list_state {
     int card_last4_pos;
     char message[64];
     bool dirty;
-    bool account_added;
+    bool changed;
 };
+
+static bool confirm_delete_account(WINDOW *parent, const char *account_name,
+                                   int txn_count) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+
+    int win_h = 8;
+    int win_w = 58;
+    if (ph < win_h)
+        win_h = ph;
+    if (pw < win_w)
+        win_w = pw;
+    if (win_h < 5 || win_w < 30)
+        return false;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    int win_y = py + (ph - win_h) / 2;
+    int win_x = px + (pw - win_w) / 2;
+
+    WINDOW *w = newwin(win_h, win_w, win_y, win_x);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+
+    char line1[96];
+    char line2[96];
+    snprintf(line1, sizeof(line1), "Delete account '%-.32s'?", account_name);
+    if (txn_count > 0) {
+        snprintf(line2, sizeof(line2), "Also delete %d related transaction%s?",
+                 txn_count, txn_count == 1 ? "" : "s");
+    } else {
+        snprintf(line2, sizeof(line2), "This account has no transactions.");
+    }
+
+    mvwprintw(w, 1, 2, "%s", line1);
+    mvwprintw(w, 3, 2, "%s", line2);
+    mvwprintw(w, win_h - 2, 2, "y:Delete  n:Cancel");
+    wrefresh(w);
+
+    bool confirm = false;
+    bool done = false;
+    while (!done) {
+        int ch = wgetch(w);
+        switch (ch) {
+        case 'y':
+        case 'Y':
+            confirm = true;
+            done = true;
+            break;
+        case 'n':
+        case 'N':
+        case 27:
+            confirm = false;
+            done = true;
+            break;
+        }
+    }
+
+    delwin(w);
+    touchwin(parent);
+    return confirm;
+}
 
 static void reload(account_list_state_t *ls) {
     free(ls->accounts);
@@ -271,11 +336,11 @@ static void submit_account(account_list_state_t *ls) {
         ls->card_last4_buf[0] = '\0';
         ls->card_last4_pos = 0;
         ls->dirty = true;
-        ls->account_added = true;
+        ls->changed = true;
     }
 }
 
-bool account_list_handle_input(account_list_state_t *ls, int ch) {
+bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch) {
     ls->message[0] = '\0';
 
     // Name input field is focused
@@ -383,6 +448,51 @@ bool account_list_handle_input(account_list_state_t *ls, int ch) {
 
     // List is focused
     switch (ch) {
+    case 'e':
+        if (ls->cursor >= 0 && ls->cursor < ls->account_count) {
+            account_t account = ls->accounts[ls->cursor];
+            form_result_t res = form_account(parent, ls->db, &account, true);
+            if (res == FORM_SAVED) {
+                ls->dirty = true;
+                ls->changed = true;
+                snprintf(ls->message, sizeof(ls->message), "Updated: %.54s",
+                         account.name);
+            }
+        }
+        return true;
+    case 'd':
+        if (ls->cursor >= 0 && ls->cursor < ls->account_count) {
+            account_t account = ls->accounts[ls->cursor];
+            int txn_count = db_count_transactions_for_account(ls->db, account.id);
+            if (txn_count < 0) {
+                snprintf(ls->message, sizeof(ls->message), "Error checking account");
+                return true;
+            }
+
+            if (!confirm_delete_account(parent, account.name, txn_count)) {
+                snprintf(ls->message, sizeof(ls->message), "Delete cancelled");
+                return true;
+            }
+
+            bool delete_txns = (txn_count > 0);
+            int rc = db_delete_account(ls->db, account.id, delete_txns);
+            if (rc == 0) {
+                ls->dirty = true;
+                ls->changed = true;
+                snprintf(ls->message, sizeof(ls->message), "Deleted: %.54s",
+                         account.name);
+            } else if (rc == -3) {
+                snprintf(ls->message, sizeof(ls->message),
+                         "Account has related transactions");
+            } else if (rc == -2) {
+                snprintf(ls->message, sizeof(ls->message), "Account not found");
+                ls->dirty = true;
+                ls->changed = true;
+            } else {
+                snprintf(ls->message, sizeof(ls->message), "Error deleting account");
+            }
+        }
+        return true;
     case KEY_UP:
     case 'k':
         if (ls->cursor > 0) {
@@ -417,7 +527,7 @@ const char *account_list_status_hint(const account_list_state_t *ls) {
                "\u2190:Sidebar";
     if (ls->cursor == -3)
         return "q:Quit  Enter:Add  \u2191:Type  \u2193:List  \u2190:Sidebar";
-    return "q:Quit  \u2191\u2193:Navigate  \u2190:Sidebar";
+    return "q:Quit  \u2191\u2193:Navigate  e:Edit  d:Delete  \u2190:Sidebar";
 }
 
 void account_list_mark_dirty(account_list_state_t *ls) {
@@ -425,9 +535,9 @@ void account_list_mark_dirty(account_list_state_t *ls) {
         ls->dirty = true;
 }
 
-bool account_list_consume_added(account_list_state_t *ls) {
-    if (!ls || !ls->account_added)
+bool account_list_consume_changed(account_list_state_t *ls) {
+    if (!ls || !ls->changed)
         return false;
-    ls->account_added = false;
+    ls->changed = false;
     return true;
 }

@@ -90,15 +90,16 @@ make clean    # clean build artifacts
 - [x] Prevent duplicate transactions when importing CSVs
 - [x] Add "Submit" button when adding an account
 - [x] Allow toggling light/dark mode via `t` shortcut
-- [ ] Show new account in Transactions view
+- [x] Show new account in Transactions view
+- [x] Allow editing/deleting accounts
 - [ ] Show summary information in header
 - [ ] Summary/report views
-- [ ] Allow editing accounts
 - [ ] Show chart of account balance over time
 - [ ] Allow "reflection date" for transactions to let user control where they're bucketed for reports and budgets
-- [ ] Category management
+- [ ] Allow adding, editing, and deleting Categories
 - [ ] Budget tracking
 - [ ] Fix error UI when adding an account with a name conflict
+- [ ] Allow archiving accounts
 - [ ] Support CSV imports for investment accounts
 - [ ] Data export (CSV)
 - [ ] Support split transactions
