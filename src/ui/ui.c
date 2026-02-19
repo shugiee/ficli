@@ -72,6 +72,7 @@ static const help_row_t help_rows[] = {
     {"S", "Toggle sort direction"},
     {"g / Home", "Jump to first"},
     {"G / End", "Jump to last"},
+    {"Ctrl+D / Ctrl+U", "Half-page down/up"},
     {"1-9", "Switch account tab"},
 
     {"", ""},

@@ -406,6 +406,19 @@ static int compare_txn(const void *a, const void *b) {
     return ls->sort_asc ? cmp : -cmp;
 }
 
+static int txn_list_visible_rows(WINDOW *win) {
+    if (!win)
+        return 20;
+    int h = 0;
+    int w = 0;
+    getmaxyx(win, h, w);
+    (void)w;
+    int visible_rows = h - 1 - DATA_ROW_START;
+    if (visible_rows < 1)
+        visible_rows = 1;
+    return visible_rows;
+}
+
 // Rebuild display array: filter transactions then sort
 static void rebuild_display(txn_list_state_t *ls) {
     free(ls->display);
@@ -803,8 +816,10 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 }
 
 bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
-    int visible_rows =
-        20; // will be corrected by draw, but we need a sensible default
+    int visible_rows = txn_list_visible_rows(parent);
+    int half_rows = visible_rows / 2;
+    if (half_rows < 1)
+        half_rows = 1;
 
     // --- Filter mode: handle text input before anything else ---
     if (ls->filter_active) {
@@ -895,6 +910,16 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
         ls->cursor += visible_rows;
         if (ls->cursor >= ls->display_count)
             ls->cursor = ls->display_count > 0 ? ls->display_count - 1 : 0;
+        return true;
+    case 4: // Ctrl-D: half-page down
+        ls->cursor += half_rows;
+        if (ls->cursor >= ls->display_count)
+            ls->cursor = ls->display_count > 0 ? ls->display_count - 1 : 0;
+        return true;
+    case 21: // Ctrl-U: half-page up
+        ls->cursor -= half_rows;
+        if (ls->cursor < 0)
+            ls->cursor = 0;
         return true;
     case '/':
         ls->filter_active = true;
@@ -1010,12 +1035,12 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
     if (ls->selected_count > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d selected  \u2191\u2193 move  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "%d selected  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  ls->selected_count, filter_tag);
     } else {
         snprintf(buf, sizeof(buf),
-                 "\u2191\u2193 move  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "\u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  filter_tag);
     }

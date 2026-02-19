@@ -98,6 +98,8 @@ make clean    # clean build artifacts
 - [x] Allow user to edit only category by hitting `c` on a transaction, without opening the full edit form ([plan](../.claude/plans/quick-category-edit-shortcut.md))
 - [x] Allow bulk editing transactions (e.g., for categorization), maybe by selecting multiple transactions with spacebar and then hitting `e` to edit all selected transactions
 - [x] Allow adding, editing, and deleting Categories in categories UI
+- [x] Use ctrl-d and ctrl-u for half-page down/up in transaction list
+- [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
 - [ ] Summary/report views
 - [ ] Show chart of account balance over time
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
