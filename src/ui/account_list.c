@@ -38,6 +38,7 @@ struct account_list_state {
     int card_last4_pos;
     char message[64];
     bool dirty;
+    bool account_added;
 };
 
 static void reload(account_list_state_t *ls) {
@@ -270,6 +271,7 @@ static void submit_account(account_list_state_t *ls) {
         ls->card_last4_buf[0] = '\0';
         ls->card_last4_pos = 0;
         ls->dirty = true;
+        ls->account_added = true;
     }
 }
 
@@ -421,4 +423,11 @@ const char *account_list_status_hint(const account_list_state_t *ls) {
 void account_list_mark_dirty(account_list_state_t *ls) {
     if (ls)
         ls->dirty = true;
+}
+
+bool account_list_consume_added(account_list_state_t *ls) {
+    if (!ls || !ls->account_added)
+        return false;
+    ls->account_added = false;
+    return true;
 }

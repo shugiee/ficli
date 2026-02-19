@@ -445,8 +445,13 @@ static void ui_handle_input(int ch) {
                 return;
         }
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
-            if (account_list_handle_input(state.account_list, ch))
+            if (account_list_handle_input(state.account_list, ch)) {
+                if (account_list_consume_added(state.account_list) &&
+                    state.txn_list) {
+                    txn_list_mark_dirty(state.txn_list);
+                }
                 return;
+            }
         }
 
         // LEFT / h / Escape unfocus content if not consumed above

@@ -13,5 +13,6 @@ void                  account_list_draw(account_list_state_t *ls, WINDOW *win, b
 bool                  account_list_handle_input(account_list_state_t *ls, int ch);
 const char           *account_list_status_hint(const account_list_state_t *ls);
 void                  account_list_mark_dirty(account_list_state_t *ls);
+bool                  account_list_consume_added(account_list_state_t *ls);
 
 #endif
