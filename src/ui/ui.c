@@ -549,6 +549,10 @@ void ui_init(void) {
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
+    // Keep Esc responsive while still allowing escape-sequence keys to parse.
+#ifdef NCURSES_VERSION
+    (void)set_escdelay(50);
+#endif
     curs_set(0);
 
     // Disable XON/XOFF flow control so Ctrl+S reaches the application
