@@ -283,6 +283,113 @@ int db_apply_category_to_uncategorized_by_payee(sqlite3 *db, const char *payee,
     return sqlite3_changes(db);
 }
 
+static int db_find_category_id(sqlite3 *db, category_type_t type,
+                               const char *name, int64_t parent_id,
+                               int64_t *out_id) {
+    if (!db || !name || name[0] == '\0' || !out_id)
+        return -1;
+
+    const char *type_str = (type == CATEGORY_INCOME) ? "INCOME" : "EXPENSE";
+    sqlite3_stmt *stmt = NULL;
+    int rc = SQLITE_OK;
+
+    if (parent_id > 0) {
+        rc = sqlite3_prepare_v2(
+            db,
+            "SELECT id FROM categories"
+            " WHERE type = ? AND name = ? AND parent_id = ?"
+            " LIMIT 1",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "db_find_category_id prepare child: %s\n",
+                    sqlite3_errmsg(db));
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, type_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
+        sqlite3_bind_int64(stmt, 3, parent_id);
+    } else {
+        rc = sqlite3_prepare_v2(
+            db,
+            "SELECT id FROM categories"
+            " WHERE type = ? AND name = ? AND parent_id IS NULL"
+            " LIMIT 1",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "db_find_category_id prepare top-level: %s\n",
+                    sqlite3_errmsg(db));
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, type_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *out_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 1;
+    }
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_find_category_id step: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    sqlite3_finalize(stmt);
+    *out_id = 0;
+    return 0;
+}
+
+int64_t db_get_or_create_category(sqlite3 *db, category_type_t type,
+                                  const char *name, int64_t parent_id) {
+    if (!db || !name || name[0] == '\0')
+        return -1;
+
+    int64_t existing_id = 0;
+    int found = db_find_category_id(db, type, name, parent_id, &existing_id);
+    if (found < 0)
+        return -1;
+    if (found == 1)
+        return existing_id;
+
+    const char *type_str = (type == CATEGORY_INCOME) ? "INCOME" : "EXPENSE";
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO categories (name, type, parent_id)"
+        " VALUES (?, ?, ?)",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_or_create_category prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, type_str, -1, SQLITE_STATIC);
+    if (parent_id > 0)
+        sqlite3_bind_int64(stmt, 3, parent_id);
+    else
+        sqlite3_bind_null(stmt, 3);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return sqlite3_last_insert_rowid(db);
+    if (rc != SQLITE_CONSTRAINT) {
+        fprintf(stderr, "db_get_or_create_category step: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    // Another caller may have inserted the same row before this insert.
+    found = db_find_category_id(db, type, name, parent_id, &existing_id);
+    if (found == 1)
+        return existing_id;
+    return -1;
+}
+
 int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
                                  int64_t *out_cents) {
     if (!out_cents)

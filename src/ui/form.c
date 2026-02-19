@@ -352,7 +352,7 @@ static void form_draw(form_state_t *fs) {
     }
 
     // Footer hints
-    mvwprintw(w, FORM_HEIGHT - 1, 2, " C-s:Save  Esc:Cancel ");
+    mvwprintw(w, FORM_HEIGHT - 1, 2, " C-s:Save  Esc:Cancel  n:New Category ");
 
     // Position cursor on active text field
     if (!fs->dropdown_open) {
@@ -395,7 +395,7 @@ static void form_draw_dropdown(form_state_t *fs) {
     } else {
         base_row = field_row(FIELD_CATEGORY) + 1;
         count = (fs->txn_type == TRANSACTION_TRANSFER) ? fs->account_count
-                                                       : fs->category_count;
+                                                       : fs->category_count + 1;
     }
 
     int visible = count < MAX_DROP ? count : MAX_DROP;
@@ -418,6 +418,8 @@ static void form_draw_dropdown(form_state_t *fs) {
             name = fs->accounts[idx].name;
         else if (fs->txn_type == TRANSACTION_TRANSFER)
             name = fs->accounts[idx].name;
+        else if (idx == fs->category_count)
+            name = "<Add category>";
         else
             name = fs->categories[idx].name;
 
@@ -450,7 +452,7 @@ static void form_open_dropdown(form_state_t *fs) {
             count = fs->account_count;
             sel = fs->transfer_account_sel;
         } else {
-            count = fs->category_count;
+            count = fs->category_count + 1;
             sel = fs->category_sel;
         }
     }
@@ -562,6 +564,207 @@ static bool validate_date(const char *str) {
         }
     }
     return true;
+}
+
+static void trim_whitespace_in_place(char *s) {
+    if (!s)
+        return;
+    int len = (int)strlen(s);
+    int start = 0;
+    while (start < len && isspace((unsigned char)s[start]))
+        start++;
+
+    int end = len;
+    while (end > start && isspace((unsigned char)s[end - 1]))
+        end--;
+
+    if (start > 0)
+        memmove(s, s + start, (size_t)(end - start));
+    s[end - start] = '\0';
+}
+
+static bool parse_category_path(const char *input, char *parent, size_t parent_sz,
+                                char *child, size_t child_sz, bool *has_parent) {
+    if (!input || !parent || !child || !has_parent || parent_sz == 0 ||
+        child_sz == 0)
+        return false;
+
+    parent[0] = '\0';
+    child[0] = '\0';
+    *has_parent = false;
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s", input);
+    trim_whitespace_in_place(buf);
+    if (buf[0] == '\0')
+        return false;
+
+    char *first_colon = strchr(buf, ':');
+    if (!first_colon) {
+        snprintf(child, child_sz, "%s", buf);
+        return true;
+    }
+    if (strchr(first_colon + 1, ':'))
+        return false;
+
+    *first_colon = '\0';
+    char *child_part = first_colon + 1;
+    trim_whitespace_in_place(buf);
+    trim_whitespace_in_place(child_part);
+    if (buf[0] == '\0' || child_part[0] == '\0')
+        return false;
+
+    snprintf(parent, parent_sz, "%s", buf);
+    snprintf(child, child_sz, "%s", child_part);
+    *has_parent = true;
+    return true;
+}
+
+static bool prompt_category_path(WINDOW *parent, category_type_t ctype, char *out,
+                                 size_t out_sz) {
+    if (!parent || !out || out_sz == 0)
+        return false;
+
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    int win_h = 8;
+    int win_w = 68;
+    if (ph < win_h)
+        win_h = ph;
+    if (pw < win_w)
+        win_w = pw;
+    if (win_h < 6 || win_w < 42)
+        return false;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    int win_y = py + (ph - win_h) / 2;
+    int win_x = px + (pw - win_w) / 2;
+
+    WINDOW *w = newwin(win_h, win_w, win_y, win_x);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+
+    char buf[64] = {0};
+    int pos = 0;
+    bool submitted = false;
+    bool done = false;
+
+    while (!done) {
+        werase(w);
+        box(w, 0, 0);
+        mvwprintw(w, 1, 2, "New %s category:",
+                  ctype == CATEGORY_INCOME ? "income" : "expense");
+        mvwprintw(w, 2, 2, "Use Parent:Child for sub-categories");
+        mvwprintw(w, 4, 2, "%-*s", win_w - 4, "");
+        mvwprintw(w, 4, 2, "%s", buf);
+        mvwprintw(w, win_h - 2, 2, "Enter:Create  Esc:Cancel");
+        wmove(w, 4, 2 + pos);
+        curs_set(1);
+        wrefresh(w);
+
+        int ch = wgetch(w);
+        if (ch == 27 || ch == KEY_EXIT) {
+            flushinp();
+            done = true;
+            submitted = false;
+            continue;
+        }
+        if (ch == '\n') {
+            submitted = true;
+            done = true;
+            continue;
+        }
+        if (ch == KEY_LEFT) {
+            if (pos > 0)
+                pos--;
+            continue;
+        }
+        if (ch == KEY_RIGHT) {
+            int len = (int)strlen(buf);
+            if (pos < len)
+                pos++;
+            continue;
+        }
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+            int len = (int)strlen(buf);
+            if (pos > 0) {
+                memmove(&buf[pos - 1], &buf[pos], (size_t)(len - pos + 1));
+                pos--;
+            }
+            continue;
+        }
+        if (isprint(ch)) {
+            int len = (int)strlen(buf);
+            if (len < (int)sizeof(buf) - 1) {
+                memmove(&buf[pos + 1], &buf[pos], (size_t)(len - pos + 1));
+                buf[pos] = (char)ch;
+                pos++;
+            }
+        }
+    }
+
+    curs_set(0);
+    delwin(w);
+    touchwin(parent);
+
+    if (!submitted)
+        return false;
+
+    snprintf(out, out_sz, "%s", buf);
+    trim_whitespace_in_place(out);
+    return out[0] != '\0';
+}
+
+static bool form_create_category_on_the_fly(WINDOW *parent, form_state_t *fs) {
+    if (!fs || fs->txn_type == TRANSACTION_TRANSFER)
+        return false;
+
+    category_type_t ctype = (fs->txn_type == TRANSACTION_INCOME)
+                                ? CATEGORY_INCOME
+                                : CATEGORY_EXPENSE;
+    char input[64];
+    if (!prompt_category_path(parent, ctype, input, sizeof(input)))
+        return false;
+
+    char parent_name[64];
+    char child_name[64];
+    bool has_parent = false;
+    if (!parse_category_path(input, parent_name, sizeof(parent_name), child_name,
+                             sizeof(child_name), &has_parent)) {
+        snprintf(fs->error, sizeof(fs->error), "Invalid category path");
+        return false;
+    }
+
+    int64_t category_id = 0;
+    if (has_parent) {
+        int64_t parent_id =
+            db_get_or_create_category(fs->db, ctype, parent_name, 0);
+        if (parent_id <= 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+        category_id =
+            db_get_or_create_category(fs->db, ctype, child_name, parent_id);
+    } else {
+        category_id = db_get_or_create_category(fs->db, ctype, child_name, 0);
+    }
+
+    if (category_id <= 0) {
+        snprintf(fs->error, sizeof(fs->error), "Database error");
+        return false;
+    }
+
+    form_load_categories(fs);
+    for (int i = 0; i < fs->category_count; i++) {
+        if (fs->categories[i].id == category_id) {
+            fs->category_sel = i;
+            return true;
+        }
+    }
+
+    snprintf(fs->error, sizeof(fs->error), "Category created but not loaded");
+    return false;
 }
 
 static bool confirm_apply_category_to_payee(WINDOW *parent, const char *payee,
@@ -1200,7 +1403,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                        fs.txn_type == TRANSACTION_TRANSFER) {
                 count = fs.account_count;
             } else {
-                count = fs.category_count;
+                count = fs.category_count + 1;
             }
             switch (ch) {
             case KEY_UP:
@@ -1212,9 +1415,17 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                     fs.dropdown_sel++;
                 break;
             case '\n':
-                form_close_dropdown(&fs, true);
+                if (fs.current_field == FIELD_CATEGORY &&
+                    fs.txn_type != TRANSACTION_TRANSFER &&
+                    fs.dropdown_sel == fs.category_count) {
+                    form_close_dropdown(&fs, false);
+                    form_create_category_on_the_fly(parent, &fs);
+                } else {
+                    form_close_dropdown(&fs, true);
+                }
                 break;
             case 27: // Escape
+            case KEY_EXIT:
                 form_close_dropdown(&fs, false);
                 break;
             }
@@ -1254,6 +1465,20 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
             } else if (fs.current_field == FIELD_ACCOUNT ||
                        fs.current_field == FIELD_CATEGORY) {
                 form_open_dropdown(&fs);
+            }
+            break;
+
+        case 'n':
+        case 'N':
+            if (fs.current_field == FIELD_CATEGORY &&
+                fs.txn_type != TRANSACTION_TRANSFER) {
+                form_create_category_on_the_fly(parent, &fs);
+            } else if (fs.current_field == FIELD_PAYEE) {
+                handle_text_input(fs.payee, &fs.payee_pos, (int)sizeof(fs.payee),
+                                  ch, false);
+            } else if (fs.current_field == FIELD_DESC) {
+                handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
+                                  ch, false);
             }
             break;
 

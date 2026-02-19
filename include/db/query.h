@@ -23,6 +23,11 @@ int db_update_account(sqlite3 *db, const account_t *account);
 // Caller frees *out. Returns count, -1 on error.
 int db_get_categories(sqlite3 *db, category_type_t type, category_t **out);
 
+// Find or create category by exact name/type/parent. parent_id <= 0 means
+// top-level. Returns category id, -1 on error.
+int64_t db_get_or_create_category(sqlite3 *db, category_type_t type,
+                                  const char *name, int64_t parent_id);
+
 // Insert a transaction. Returns new row id, -1 on error.
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn);
 

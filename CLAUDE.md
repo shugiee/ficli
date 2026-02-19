@@ -94,8 +94,11 @@ make clean    # clean build artifacts
 - [x] Allow editing/deleting accounts
 - [x] Show summary information in header
 - [x] When adding category to a transaction, offer to apply same change to all transactions with the same payee and no category
+- [x] Allow user to add new category on the fly when categorizing a transaction, including sub-category support (e.g., "Food:Dining Out") ([plan](../.claude/plans/on-the-fly-category-creation.md))
+- [ ] Allow user to edit only category by hitting `c` on a transaction, without opening the full edit form
 - [ ] Allow bulk editing transactions (e.g., for categorization)
 - [ ] Summary/report views
+- [ ] Allow user to type to filter dropdowns
 - [ ] Show chart of account balance over time
 - [ ] Allow "reflection date" for transactions to let user control where they're bucketed for reports and budgets
 - [ ] Allow adding, editing, and deleting Categories
