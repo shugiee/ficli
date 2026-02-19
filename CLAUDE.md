@@ -100,6 +100,7 @@ make clean    # clean build artifacts
 - [ ] Summary/report views
 - [ ] Allow user to type to filter dropdowns
 - [ ] Show chart of account balance over time
+- [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow "reflection date" for transactions to let user control where they're bucketed for reports and budgets
 - [ ] Allow adding, editing, and deleting Categories
 - [ ] Budget tracking

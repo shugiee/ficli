@@ -21,3 +21,4 @@
 #define COLOR_FORM_ACTIVE 6  // CUST_BG on CUST_AQUA — active form field
 #define COLOR_EXPENSE     7  // CUST_RED on CUST_BG — expense amounts
 #define COLOR_INCOME      8  // CUST_GREEN on CUST_BG — income amounts
+#define COLOR_INFO        9  // CUST_AQUA on CUST_BG — info text

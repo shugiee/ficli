@@ -54,6 +54,10 @@ struct txn_list_state {
     txn_row_t *transactions;
     int txn_count;
 
+    int64_t *selected_ids;
+    int selected_count;
+    int selected_capacity;
+
     // Sort
     sort_col_t sort_col;
     bool sort_asc;
@@ -76,6 +80,127 @@ struct txn_list_state {
     int scroll_offset;
     bool dirty;
 };
+
+static bool txn_list_is_selected(const txn_list_state_t *ls, int64_t id) {
+    if (!ls || ls->selected_count <= 0 || !ls->selected_ids)
+        return false;
+    for (int i = 0; i < ls->selected_count; i++) {
+        if (ls->selected_ids[i] == id)
+            return true;
+    }
+    return false;
+}
+
+static void txn_list_clear_selected(txn_list_state_t *ls) {
+    if (!ls)
+        return;
+    ls->selected_count = 0;
+}
+
+static void txn_list_toggle_selected(txn_list_state_t *ls, int64_t id) {
+    if (!ls)
+        return;
+    for (int i = 0; i < ls->selected_count; i++) {
+        if (ls->selected_ids[i] == id) {
+            ls->selected_ids[i] = ls->selected_ids[ls->selected_count - 1];
+            ls->selected_count--;
+            return;
+        }
+    }
+    if (ls->selected_count >= ls->selected_capacity) {
+        int new_cap = (ls->selected_capacity == 0) ? 8 : ls->selected_capacity * 2;
+        int64_t *tmp = realloc(ls->selected_ids, new_cap * sizeof(int64_t));
+        if (!tmp)
+            return;
+        ls->selected_ids = tmp;
+        ls->selected_capacity = new_cap;
+    }
+    ls->selected_ids[ls->selected_count++] = id;
+}
+
+static void txn_list_select_id(txn_list_state_t *ls, int64_t id) {
+    if (!ls || id <= 0)
+        return;
+    if (txn_list_is_selected(ls, id))
+        return;
+    if (ls->selected_count >= ls->selected_capacity) {
+        int new_cap = (ls->selected_capacity == 0) ? 8 : ls->selected_capacity * 2;
+        int64_t *tmp = realloc(ls->selected_ids, new_cap * sizeof(int64_t));
+        if (!tmp)
+            return;
+        ls->selected_ids = tmp;
+        ls->selected_capacity = new_cap;
+    }
+    ls->selected_ids[ls->selected_count++] = id;
+}
+
+static int64_t txn_list_template_id(const txn_list_state_t *ls) {
+    if (!ls || ls->display_count <= 0)
+        return 0;
+    int64_t current_id = ls->display[ls->cursor].id;
+    if (ls->selected_count > 0) {
+        if (txn_list_is_selected(ls, current_id))
+            return current_id;
+        return ls->selected_ids[0];
+    }
+    return current_id;
+}
+
+static bool txn_list_apply_template_to_selected(txn_list_state_t *ls,
+                                                const transaction_t *tmpl,
+                                                int64_t tmpl_id,
+                                                int64_t transfer_to_account_id) {
+    if (!ls || !tmpl || ls->selected_count <= 0)
+        return false;
+    bool updated = false;
+    for (int i = 0; i < ls->selected_count; i++) {
+        int64_t id = ls->selected_ids[i];
+        if (id == tmpl_id)
+            continue;
+        transaction_t txn = *tmpl;
+        txn.id = id;
+        if (tmpl->type != TRANSACTION_TRANSFER)
+            txn.transfer_id = 0;
+
+        int rc = 0;
+        if (tmpl->type == TRANSACTION_TRANSFER) {
+            if (transfer_to_account_id <= 0)
+                continue;
+            rc = db_update_transfer(ls->db, &txn, transfer_to_account_id);
+        } else {
+            rc = db_update_transaction(ls->db, &txn);
+        }
+
+        if (rc == 0)
+            updated = true;
+    }
+    return updated;
+}
+
+static bool txn_list_apply_category_to_selected(txn_list_state_t *ls,
+                                                int64_t tmpl_id,
+                                                int64_t category_id) {
+    if (!ls || ls->selected_count <= 0)
+        return false;
+    bool updated = false;
+    for (int i = 0; i < ls->selected_count; i++) {
+        int64_t id = ls->selected_ids[i];
+        if (id == tmpl_id)
+            continue;
+        transaction_t txn = {0};
+        int rc = db_get_transaction_by_id(ls->db, (int)id, &txn);
+        if (rc != 0)
+            continue;
+        if (txn.type == TRANSACTION_TRANSFER)
+            continue;
+        txn.category_id = category_id;
+        txn.transfer_id = 0;
+        rc = db_update_transaction(ls->db, &txn);
+        if (rc == 0)
+            updated = true;
+    }
+    return updated;
+}
 
 static bool confirm_delete(WINDOW *parent) {
     int ph, pw;
@@ -321,6 +446,7 @@ static void reload(txn_list_state_t *ls) {
     ls->txn_count = 0;
     ls->cursor = 0;
     ls->scroll_offset = 0;
+    txn_list_clear_selected(ls);
 
     // Reload accounts
     free(ls->accounts);
@@ -378,6 +504,7 @@ void txn_list_destroy(txn_list_state_t *ls) {
     free(ls->accounts);
     free(ls->transactions);
     free(ls->display);
+    free(ls->selected_ids);
     free(ls);
 }
 
@@ -511,6 +638,16 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         if (ls->filter_active)
             wattroff(win, A_BOLD);
     }
+    if (ls->selected_count > 0) {
+        const char *bulk_msg = "Bulk edit mode (Esc clears)";
+        int bulk_len = (int)strlen(bulk_msg);
+        int bulk_col = w - bulk_len - 2;
+        if (bulk_col < 2)
+            bulk_col = 2;
+        wattron(win, COLOR_PAIR(COLOR_INFO));
+        mvwprintw(win, FILTER_ROW, bulk_col, "%s", bulk_msg);
+        wattroff(win, COLOR_PAIR(COLOR_INFO));
+    }
 
     // -- Column headers (row 8) with sort direction indicator --
     // Column layout: Date(12) gap(3) Type(8) gap(3) Category(20) gap(3)
@@ -621,12 +758,15 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         snprintf(desc_buf, sizeof(desc_buf), "%-*.*s", desc_w, desc_w,
                  t->description);
 
-        bool selected = (idx == ls->cursor);
-        if (selected) {
+        bool cursor_selected = (idx == ls->cursor);
+        bool row_selected = txn_list_is_selected(ls, t->id);
+        if (cursor_selected) {
             if (!focused)
                 wattron(win, A_DIM);
             wattron(win, A_REVERSE);
         }
+
+        mvwaddch(win, row, 1, row_selected ? '*' : ' ');
 
         // Print the base row (clears it)
         mvwprintw(win, row, 2, "%-*s   %-*s   %-*.*s   ", DATE_COL_WIDTH,
@@ -650,7 +790,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         // Description
         mvwprintw(win, row, payee_col + PAYEE_COL_WIDTH, "%s", desc_buf);
 
-        if (selected) {
+        if (cursor_selected) {
             wattroff(win, A_REVERSE);
             if (!focused)
                 wattroff(win, A_DIM);
@@ -706,15 +846,37 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
 
     // --- Normal mode ---
     switch (ch) {
+    case 27: // Esc clears bulk selection
+        if (ls->selected_count > 0) {
+            txn_list_clear_selected(ls);
+            return true;
+        }
+        break;
     case KEY_UP:
     case 'k':
         if (ls->cursor > 0)
             ls->cursor--;
         return true;
+    case KEY_SR:
+        if (ls->display_count <= 0)
+            return true;
+        txn_list_select_id(ls, ls->display[ls->cursor].id);
+        if (ls->cursor > 0)
+            ls->cursor--;
+        txn_list_select_id(ls, ls->display[ls->cursor].id);
+        return true;
     case KEY_DOWN:
     case 'j':
         if (ls->cursor < ls->display_count - 1)
             ls->cursor++;
+        return true;
+    case KEY_SF:
+        if (ls->display_count <= 0)
+            return true;
+        txn_list_select_id(ls, ls->display[ls->cursor].id);
+        if (ls->cursor < ls->display_count - 1)
+            ls->cursor++;
+        txn_list_select_id(ls, ls->display[ls->cursor].id);
         return true;
     case KEY_HOME:
     case 'g':
@@ -749,14 +911,27 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
         if (ls->display_count <= 0)
             return true;
         {
+            int64_t tmpl_id = txn_list_template_id(ls);
+            if (tmpl_id <= 0)
+                return true;
             transaction_t txn = {0};
-            int rc = db_get_transaction_by_id(
-                ls->db, (int)ls->display[ls->cursor].id, &txn);
+            int rc = db_get_transaction_by_id(ls->db, (int)tmpl_id, &txn);
             if (rc == 0) {
                 form_result_t res =
                     form_transaction(parent, ls->db, &txn, true);
-                if (res == FORM_SAVED)
+                if (res == FORM_SAVED) {
+                    int64_t to_account_id = 0;
+                    if (txn.type == TRANSACTION_TRANSFER) {
+                        if (db_get_transfer_counterparty_account(
+                                ls->db, txn.id, &to_account_id) < 0) {
+                            to_account_id = 0;
+                        }
+                    }
+                    txn_list_apply_template_to_selected(
+                        ls, &txn, tmpl_id, to_account_id);
+                    txn_list_clear_selected(ls);
                     ls->dirty = true;
+                }
             } else {
                 ls->dirty = true;
             }
@@ -766,16 +941,30 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
         if (ls->display_count <= 0)
             return true;
         {
+            int64_t tmpl_id = txn_list_template_id(ls);
+            if (tmpl_id <= 0)
+                return true;
             transaction_t txn = {0};
-            int rc = db_get_transaction_by_id(
-                ls->db, (int)ls->display[ls->cursor].id, &txn);
+            int rc = db_get_transaction_by_id(ls->db, (int)tmpl_id, &txn);
             if (rc == 0 && txn.type != TRANSACTION_TRANSFER) {
                 form_result_t res = form_transaction_category(parent, ls->db, &txn);
-                if (res == FORM_SAVED)
+                if (res == FORM_SAVED) {
+                    txn_list_apply_category_to_selected(
+                        ls, tmpl_id, txn.category_id);
+                    txn_list_clear_selected(ls);
                     ls->dirty = true;
+                }
             } else if (rc != 0) {
                 ls->dirty = true;
             }
+        }
+        return true;
+    case ' ':
+        if (ls->display_count <= 0)
+            return true;
+        {
+            int64_t id = ls->display[ls->cursor].id;
+            txn_list_toggle_selected(ls, id);
         }
         return true;
     case 'd':
@@ -805,6 +994,8 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
         }
         return false;
     }
+
+    return false;
 }
 
 const char *txn_list_status_hint(const txn_list_state_t *ls) {
@@ -817,10 +1008,17 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
         return "1-9 acct  a add  /filter  s sort  \u2190 back";
 
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
-    snprintf(buf, sizeof(buf),
-             "\u2191\u2193 move  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
-             " a add  \u2190 back",
-             filter_tag);
+    if (ls->selected_count > 0) {
+        snprintf(buf, sizeof(buf),
+                 "%d selected  \u2191\u2193 move  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 " a add  \u2190 back",
+                 ls->selected_count, filter_tag);
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "\u2191\u2193 move  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 " a add  \u2190 back",
+                 filter_tag);
+    }
     return buf;
 }
 

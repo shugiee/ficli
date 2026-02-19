@@ -59,6 +59,9 @@ static const help_row_t help_rows[] = {
 
     {"", ""},
     {NULL, "Transactions list"},
+    {"Space", "Toggle selection"},
+    {"Shift+\u2191/\u2193", "Extend selection"},
+    {"Esc", "Clear selection"},
     {"e", "Edit selected"},
     {"c", "Edit category only"},
     {"d", "Delete selected"},
@@ -229,6 +232,7 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_FORM_ACTIVE, CUST_BG,    CUST_AQUA);
     init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
     init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
+    init_pair(COLOR_INFO,        CUST_AQUA,  CUST_BG);
 }
 
 static void ui_create_layout(void) {
