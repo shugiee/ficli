@@ -53,6 +53,18 @@ int db_delete_transaction(sqlite3 *db, int txn_id);
 // Count transactions for an account. Returns count, -1 on error.
 int db_count_transactions_for_account(sqlite3 *db, int64_t account_id);
 
+// Count uncategorized non-transfer transactions with an exact payee and type.
+// Returns 0 on success, -1 on error.
+int db_count_uncategorized_by_payee(sqlite3 *db, const char *payee,
+                                    transaction_type_t type,
+                                    int64_t *out_count);
+
+// Apply category to uncategorized non-transfer transactions with exact payee and
+// type. Returns number of updated rows, -1 on error.
+int db_apply_category_to_uncategorized_by_payee(sqlite3 *db, const char *payee,
+                                                transaction_type_t type,
+                                                int64_t category_id);
+
 // Account-level summary helpers. Returns 0 on success, -1 on error.
 int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
                                  int64_t *out_cents);

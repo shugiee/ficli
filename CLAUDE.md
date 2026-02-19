@@ -93,6 +93,7 @@ make clean    # clean build artifacts
 - [x] Show new account in Transactions view
 - [x] Allow editing/deleting accounts
 - [x] Show summary information in header
+- [x] When adding category to a transaction, offer to apply same change to all transactions with the same payee and no category
 - [ ] Allow bulk editing transactions (e.g., for categorization)
 - [ ] Summary/report views
 - [ ] Show chart of account balance over time

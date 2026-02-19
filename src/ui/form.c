@@ -68,6 +68,12 @@ typedef struct {
 
     // Error message
     char error[64];
+
+    // Post-save category propagation offer state
+    bool offer_category_propagation;
+    char offer_payee[128];
+    transaction_type_t offer_type;
+    int64_t offer_category_id;
 } form_state_t;
 
 static int first_other_account_index(const form_state_t *fs, int current_idx) {
@@ -558,8 +564,88 @@ static bool validate_date(const char *str) {
     return true;
 }
 
+static bool confirm_apply_category_to_payee(WINDOW *parent, const char *payee,
+                                            int64_t match_count) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+
+    int win_h = 8;
+    int win_w = 64;
+    if (ph < win_h)
+        win_h = ph;
+    if (pw < win_w)
+        win_w = pw;
+    if (win_h < 5 || win_w < 34)
+        return false;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    int win_y = py + (ph - win_h) / 2;
+    int win_x = px + (pw - win_w) / 2;
+
+    WINDOW *w = newwin(win_h, win_w, win_y, win_x);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+
+    char payee_line[96];
+    snprintf(payee_line, sizeof(payee_line), "Payee '%-.32s' has %ld uncategorized match%s.",
+             payee, (long)match_count, match_count == 1 ? "" : "es");
+    mvwprintw(w, 1, 2, "Apply this category to matching transactions?");
+    mvwprintw(w, 3, 2, "%s", payee_line);
+    mvwprintw(w, win_h - 2, 2, "y:Apply  n:Skip");
+    wrefresh(w);
+
+    bool confirm = false;
+    bool done = false;
+    while (!done) {
+        int ch = wgetch(w);
+        switch (ch) {
+        case 'y':
+        case 'Y':
+            confirm = true;
+            done = true;
+            break;
+        case 'n':
+        case 'N':
+        case 27:
+            confirm = false;
+            done = true;
+            break;
+        }
+    }
+
+    delwin(w);
+    touchwin(parent);
+    return confirm;
+}
+
+static void maybe_propagate_category_to_payee(WINDOW *parent, form_state_t *fs) {
+    if (!fs->offer_category_propagation)
+        return;
+    fs->offer_category_propagation = false;
+
+    int64_t match_count = 0;
+    if (db_count_uncategorized_by_payee(fs->db, fs->offer_payee, fs->offer_type,
+                                        &match_count) < 0)
+        return;
+    if (match_count <= 0)
+        return;
+    if (!confirm_apply_category_to_payee(parent, fs->offer_payee, match_count))
+        return;
+
+    db_apply_category_to_uncategorized_by_payee(fs->db, fs->offer_payee,
+                                                fs->offer_type,
+                                                fs->offer_category_id);
+}
+
 static bool form_validate_and_save(form_state_t *fs) {
     fs->error[0] = '\0';
+    fs->offer_category_propagation = false;
+
+    int64_t prior_category_id = 0;
+    if (fs->is_edit && fs->txn)
+        prior_category_id = fs->txn->category_id;
 
     // Validate amount
     int64_t cents = parse_amount_cents(fs->amount);
@@ -655,6 +741,16 @@ static bool form_validate_and_save(form_state_t *fs) {
 
     if (fs->txn)
         *fs->txn = txn;
+
+    // Editing an uncategorized non-transfer transaction is the manual
+    // categorization workflow where propagation is useful.
+    if (fs->is_edit && prior_category_id <= 0 && txn.category_id > 0 &&
+        txn.type != TRANSACTION_TRANSFER && txn.payee[0] != '\0') {
+        fs->offer_category_propagation = true;
+        fs->offer_type = txn.type;
+        fs->offer_category_id = txn.category_id;
+        snprintf(fs->offer_payee, sizeof(fs->offer_payee), "%s", txn.payee);
+    }
 
     return true;
 }
@@ -1132,6 +1228,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
 
         case 19: // Ctrl+S
             if (form_validate_and_save(&fs)) {
+                maybe_propagate_category_to_payee(parent, &fs);
                 result = FORM_SAVED;
                 done = true;
             }
@@ -1150,6 +1247,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
         case '\n':
             if (fs.current_field == FIELD_SUBMIT) {
                 if (form_validate_and_save(&fs)) {
+                    maybe_propagate_category_to_payee(parent, &fs);
                     result = FORM_SAVED;
                     done = true;
                 }
@@ -1162,6 +1260,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
         case ' ':
             if (fs.current_field == FIELD_SUBMIT) {
                 if (form_validate_and_save(&fs)) {
+                    maybe_propagate_category_to_payee(parent, &fs);
                     result = FORM_SAVED;
                     done = true;
                 }

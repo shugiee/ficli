@@ -211,6 +211,78 @@ int db_count_transactions_for_account(sqlite3 *db, int64_t account_id) {
     return count;
 }
 
+int db_count_uncategorized_by_payee(sqlite3 *db, const char *payee,
+                                    transaction_type_t type,
+                                    int64_t *out_count) {
+    if (!payee || payee[0] == '\0' || !out_count || type == TRANSACTION_TRANSFER)
+        return -1;
+
+    *out_count = 0;
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COUNT(*) FROM transactions"
+        " WHERE payee = ?"
+        "   AND type = ?"
+        "   AND category_id IS NULL",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_count_uncategorized_by_payee prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, payee, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, transaction_type_to_str(type), -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_count_uncategorized_by_payee step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    *out_count = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_apply_category_to_uncategorized_by_payee(sqlite3 *db, const char *payee,
+                                                transaction_type_t type,
+                                                int64_t category_id) {
+    if (!payee || payee[0] == '\0' || category_id <= 0 ||
+        type == TRANSACTION_TRANSFER)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "UPDATE transactions"
+        " SET category_id = ?"
+        " WHERE payee = ?"
+        "   AND type = ?"
+        "   AND category_id IS NULL",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_apply_category_to_uncategorized_by_payee prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    sqlite3_bind_text(stmt, 2, payee, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, transaction_type_to_str(type), -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_apply_category_to_uncategorized_by_payee step: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    return sqlite3_changes(db);
+}
+
 int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
                                  int64_t *out_cents) {
     if (!out_cents)
