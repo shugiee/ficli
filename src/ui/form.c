@@ -300,7 +300,7 @@ static void form_draw(form_state_t *fs) {
             break;
         case FIELD_ACCOUNT:
             if (fs->account_count > 0)
-                mvwprintw(w, row, FIELD_COL, "%s [v]",
+                mvwprintw(w, row, FIELD_COL, "▾ %s",
                           fs->accounts[fs->account_sel].name);
             else
                 mvwprintw(w, row, FIELD_COL, "(none)");
@@ -308,13 +308,13 @@ static void form_draw(form_state_t *fs) {
         case FIELD_CATEGORY:
             if (fs->txn_type == TRANSACTION_TRANSFER) {
                 if (fs->account_count > 1) {
-                    mvwprintw(w, row, FIELD_COL, "%s [v]",
+                    mvwprintw(w, row, FIELD_COL, "▾ %s",
                               fs->accounts[fs->transfer_account_sel].name);
                 } else {
                     mvwprintw(w, row, FIELD_COL, "(none)");
                 }
             } else if (fs->category_count > 0) {
-                mvwprintw(w, row, FIELD_COL, "%s [v]",
+                mvwprintw(w, row, FIELD_COL, "▾ %s",
                           fs->categories[fs->category_sel].name);
             } else {
                 mvwprintw(w, row, FIELD_COL, "(none)");
@@ -511,7 +511,7 @@ static void category_form_draw(form_state_t *fs) {
         wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
     mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "%-*s", FIELD_WIDTH, "");
     if (fs->category_count > 0) {
-        mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "%s [v]",
+        mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "▾ %s",
                   fs->categories[fs->category_sel].name);
     } else {
         mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "(none)");
