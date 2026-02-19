@@ -1,16 +1,16 @@
 #pragma once
 
-// Custom color slots — defined via init_color() with the Everforest Light
+// Custom color slots — defined via init_color() with the Everforest
 // palette. Indices 16-23 sit above the standard 16 ANSI colors so they don't
 // clobber terminal defaults.
-#define CUST_BG     16  // #fdf6e3  warm cream background
-#define CUST_RED    17  // #e67e80  red
-#define CUST_GREEN  18  // #a7c080  muted green
-#define CUST_YELLOW 19  // #dbbc7f  warm yellow
-#define CUST_BLUE   20  // #7fbbb3  teal
-#define CUST_PURPLE 21  // #d699b6  soft purple
-#define CUST_AQUA   22  // #83c092  aqua/mint
-#define CUST_FG     23  // #5c6a72  dark gray foreground
+#define CUST_BG     16
+#define CUST_RED    17
+#define CUST_GREEN  18
+#define CUST_YELLOW 19
+#define CUST_BLUE   20
+#define CUST_PURPLE 21
+#define CUST_AQUA   22
+#define CUST_FG     23
 
 // Color pair indices — shared by all UI modules.
 #define COLOR_NORMAL      1  // CUST_FG on CUST_BG — default text

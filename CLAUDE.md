@@ -89,7 +89,7 @@ make clean    # clean build artifacts
 - [x] Add a Payee field to transactions
 - [x] Prevent duplicate transactions when importing CSVs
 - [x] Add "Submit" button when adding an account
-- [ ] Allow toggling light/dark mode
+- [x] Allow toggling light/dark mode via `t` shortcut
 - [ ] Show new account in Transactions view
 - [ ] Show summary information in header
 - [ ] Summary/report views

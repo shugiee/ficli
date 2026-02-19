@@ -5,9 +5,13 @@
 #include "ui/import_dialog.h"
 #include "ui/txn_list.h"
 
+#include <errno.h>
 #include <locale.h>
 #include <ncurses.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -30,6 +34,7 @@ static struct {
     bool running;
     txn_list_state_t *txn_list;
     account_list_state_t *account_list;
+    bool dark_mode;
 } state;
 
 typedef struct {
@@ -42,6 +47,7 @@ static const help_row_t help_rows[] = {
     {"q", "Quit"},
     {"a", "Add transaction"},
     {"i", "Import CSV"},
+    {"t", "Toggle theme"},
     {"?", "This help"},
 
     {"", ""},
@@ -89,6 +95,138 @@ static const help_row_t help_rows[] = {
 /* desc width: 52 - 2(border) - 18(key) - 2(left pad + gap) - 1(right pad) = 29
  */
 #define HELP_DESC_W (HELP_WIN_W - 2 - HELP_KEY_W - 2 - 1)
+
+static bool ui_get_config_dir(char *out, size_t out_sz) {
+    const char *base = getenv("XDG_CONFIG_HOME");
+    if (!base || base[0] == '\0') {
+        const char *home = getenv("HOME");
+        if (!home || home[0] == '\0')
+            return false;
+        snprintf(out, out_sz, "%s/.config/ficli", home);
+        return true;
+    }
+    snprintf(out, out_sz, "%s/ficli", base);
+    return true;
+}
+
+static bool ui_get_config_path(char *out, size_t out_sz) {
+    char dir[512];
+    if (!ui_get_config_dir(dir, sizeof(dir)))
+        return false;
+    snprintf(out, out_sz, "%s/config.ini", dir);
+    return true;
+}
+
+static bool ui_ensure_config_dir(void) {
+    char dir[512];
+    if (!ui_get_config_dir(dir, sizeof(dir)))
+        return false;
+
+    const char *base = getenv("XDG_CONFIG_HOME");
+    if (!base || base[0] == '\0') {
+        const char *home = getenv("HOME");
+        if (!home || home[0] == '\0')
+            return false;
+        char parent[512];
+        snprintf(parent, sizeof(parent), "%s/.config", home);
+        if (mkdir(parent, 0755) != 0 && errno != EEXIST)
+            return false;
+    } else {
+        if (mkdir(base, 0755) != 0 && errno != EEXIST)
+            return false;
+    }
+
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST)
+        return false;
+    return true;
+}
+
+static bool ui_load_theme_pref(bool *dark_mode) {
+    char path[512];
+    if (!ui_get_config_path(path, sizeof(path)))
+        return false;
+
+    FILE *fp = fopen(path, "r");
+    if (!fp)
+        return false;
+
+    char line[128];
+    bool found = false;
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "theme=", 6) == 0) {
+            const char *val = line + 6;
+            if (strncmp(val, "dark", 4) == 0) {
+                *dark_mode = true;
+                found = true;
+                break;
+            }
+            if (strncmp(val, "light", 5) == 0) {
+                *dark_mode = false;
+                found = true;
+                break;
+            }
+        } else if (strncmp(line, "dark_mode=", 10) == 0) {
+            const char *val = line + 10;
+            *dark_mode = (val[0] == '1');
+            found = true;
+            break;
+        }
+    }
+
+    fclose(fp);
+    return found;
+}
+
+static void ui_save_theme_pref(bool dark_mode) {
+    char path[512];
+    if (!ui_get_config_path(path, sizeof(path)))
+        return;
+    if (!ui_ensure_config_dir())
+        return;
+
+    FILE *fp = fopen(path, "w");
+    if (!fp)
+        return;
+
+    fprintf(fp, "theme=%s\n", dark_mode ? "dark" : "light");
+    fclose(fp);
+}
+
+static void ui_apply_theme(bool dark_mode) {
+    // Scale an 8-bit hex component to ncurses 0-1000 range
+#define HEX_NC(v) ((v) * 1000 / 255)
+    if (dark_mode) {
+        // Everforest Dark (Medium)
+        init_color(CUST_BG,     HEX_NC(0x2d), HEX_NC(0x35), HEX_NC(0x3b));
+        init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
+        init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
+        init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
+        init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
+        init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
+        init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
+        init_color(CUST_FG,     HEX_NC(0xd3), HEX_NC(0xc6), HEX_NC(0xaa));
+    } else {
+        // Everforest Light (Medium)
+        init_color(CUST_BG,     HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
+        init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
+        init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
+        init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
+        init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
+        init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
+        init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
+        init_color(CUST_FG,     HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
+    }
+#undef HEX_NC
+
+    init_pair(COLOR_NORMAL,      CUST_FG,    CUST_BG);
+    init_pair(COLOR_HEADER,      CUST_BG,    CUST_BLUE);
+    init_pair(COLOR_SELECTED,    CUST_BG,    CUST_FG);
+    init_pair(COLOR_STATUS,      CUST_BG,    CUST_BLUE);
+    init_pair(COLOR_FORM,        CUST_BG,    CUST_FG);
+    init_pair(COLOR_FORM_ACTIVE, CUST_BG,    CUST_AQUA);
+    init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
+    init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
+}
 
 static void ui_create_layout(void) {
     int rows, cols;
@@ -183,7 +321,8 @@ static void ui_draw_status(void) {
                   account_list_status_hint(state.account_list));
     } else {
         mvwprintw(state.status, 0, 1,
-                  "q:Quit  a:Add  i:Import  ?:Help  \u2191\u2193:Navigate  Enter:Select");
+                  "q:Quit  a:Add  i:Import  t:Theme  ?:Help  "
+                  "\u2191\u2193:Navigate  Enter:Select");
     }
     wnoutrefresh(state.status);
 }
@@ -364,6 +503,19 @@ static void ui_handle_input(int ch) {
         touchwin(state.content);
         touchwin(state.status);
     } break;
+    case 't':
+        state.dark_mode = !state.dark_mode;
+        ui_apply_theme(state.dark_mode);
+        ui_save_theme_pref(state.dark_mode);
+
+        wbkgd(stdscr, COLOR_PAIR(COLOR_NORMAL));
+        wbkgd(state.sidebar, COLOR_PAIR(COLOR_NORMAL));
+        wbkgd(state.content, COLOR_PAIR(COLOR_NORMAL));
+        touchwin(state.header);
+        touchwin(state.sidebar);
+        touchwin(state.content);
+        touchwin(state.status);
+        break;
     case '?':
         ui_show_help();
         break;
@@ -389,27 +541,9 @@ void ui_init(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &term);
 
     start_color();
-
-// Scale an 8-bit hex component to ncurses 0-1000 range
-#define HEX_NC(v) ((v) * 1000 / 255)
-    init_color(CUST_BG,     HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
-    init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
-    init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
-    init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
-    init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
-    init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
-    init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
-    init_color(CUST_FG,     HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
-#undef HEX_NC
-
-    init_pair(COLOR_NORMAL,      CUST_FG,    CUST_BG);
-    init_pair(COLOR_HEADER,      CUST_BG,    CUST_BLUE);
-    init_pair(COLOR_SELECTED,    CUST_BG,    CUST_FG);
-    init_pair(COLOR_STATUS,      CUST_BG,    CUST_BLUE);
-    init_pair(COLOR_FORM,        CUST_BG,    CUST_FG);
-    init_pair(COLOR_FORM_ACTIVE, CUST_BG,    CUST_AQUA);
-    init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
-    init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
+    state.dark_mode = false;
+    ui_load_theme_pref(&state.dark_mode);
+    ui_apply_theme(state.dark_mode);
 }
 
 void ui_cleanup(void) { endwin(); }
