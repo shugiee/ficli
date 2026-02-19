@@ -371,6 +371,58 @@ csv_parse_result_t csv_parse_file(const char *path) {
     return result;
 }
 
+// Returns true if a CSV row matches an existing transaction (for dedup).
+// Match key: date + amount_cents + type + payee.
+static bool row_matches_txn(const csv_row_t *row, const txn_row_t *txn) {
+    return row->amount_cents == txn->amount_cents &&
+           row->type == txn->type &&
+           strcmp(row->date, txn->date) == 0 &&
+           strcmp(row->payee, txn->payee) == 0;
+}
+
+// Per-account cache of existing transactions used for dedup during import.
+typedef struct {
+    int64_t account_id;
+    txn_row_t *txns;
+    bool *consumed;
+    int count;
+} acct_txn_cache_t;
+
+// Find or load a cache entry for account_id. Returns NULL on allocation failure.
+// caches must have room for at least one more entry (caller ensures capacity).
+static acct_txn_cache_t *get_acct_cache(sqlite3 *db, acct_txn_cache_t *caches,
+                                         int *ncaches, int64_t account_id) {
+    for (int i = 0; i < *ncaches; i++) {
+        if (caches[i].account_id == account_id)
+            return &caches[i];
+    }
+
+    acct_txn_cache_t *c = &caches[*ncaches];
+    c->account_id = account_id;
+    c->txns = NULL;
+    c->consumed = NULL;
+    c->count = 0;
+
+    int cnt = db_get_transactions(db, account_id, &c->txns);
+    if (cnt < 0) {
+        free(c->txns);
+        c->txns = NULL;
+        return NULL;
+    }
+    c->count = cnt;
+
+    c->consumed = calloc(c->count > 0 ? c->count : 1, sizeof(bool));
+    if (!c->consumed) {
+        free(c->txns);
+        c->txns = NULL;
+        c->count = 0;
+        return NULL;
+    }
+
+    (*ncaches)++;
+    return c;
+}
+
 void csv_parse_result_free(csv_parse_result_t *r) {
     if (!r)
         return;
@@ -391,6 +443,16 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
         return -1;
     }
 
+    // One cache entry per CC account (at most account_count entries needed).
+    acct_txn_cache_t *caches = calloc(account_count > 0 ? account_count : 1,
+                                       sizeof(acct_txn_cache_t));
+    if (!caches) {
+        free(accounts);
+        return -1;
+    }
+    int ncaches = 0;
+    int ret = 0;
+
     for (int i = 0; i < r->row_count; i++) {
         const csv_row_t *row = &r->rows[i];
 
@@ -408,6 +470,26 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
             continue;
         }
 
+        acct_txn_cache_t *cache = get_acct_cache(db, caches, &ncaches, account_id);
+        if (!cache) {
+            ret = -1;
+            goto cleanup;
+        }
+
+        // Check for a matching unconsumed existing transaction (dedup).
+        bool is_dup = false;
+        for (int j = 0; j < cache->count; j++) {
+            if (!cache->consumed[j] && row_matches_txn(row, &cache->txns[j])) {
+                cache->consumed[j] = true;
+                is_dup = true;
+                break;
+            }
+        }
+        if (is_dup) {
+            (*skipped)++;
+            continue;
+        }
+
         transaction_t txn = {0};
         txn.amount_cents = row->amount_cents;
         txn.type = row->type;
@@ -416,22 +498,56 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
 
         if (db_insert_transaction(db, &txn) < 0) {
-            free(accounts);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         (*imported)++;
     }
 
+cleanup:
+    for (int i = 0; i < ncaches; i++) {
+        free(caches[i].txns);
+        free(caches[i].consumed);
+    }
+    free(caches);
     free(accounts);
-    return 0;
+    return ret;
 }
 
 int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
-                        int64_t account_id, int *imported) {
+                        int64_t account_id, int *imported, int *skipped) {
     *imported = 0;
+    *skipped = 0;
 
+    txn_row_t *existing = NULL;
+    int nexisting = db_get_transactions(db, account_id, &existing);
+    if (nexisting < 0) {
+        free(existing);
+        return -1;
+    }
+
+    bool *consumed = calloc(nexisting > 0 ? nexisting : 1, sizeof(bool));
+    if (!consumed) {
+        free(existing);
+        return -1;
+    }
+
+    int ret = 0;
     for (int i = 0; i < r->row_count; i++) {
         const csv_row_t *row = &r->rows[i];
+
+        bool is_dup = false;
+        for (int j = 0; j < nexisting; j++) {
+            if (!consumed[j] && row_matches_txn(row, &existing[j])) {
+                consumed[j] = true;
+                is_dup = true;
+                break;
+            }
+        }
+        if (is_dup) {
+            (*skipped)++;
+            continue;
+        }
 
         transaction_t txn = {0};
         txn.amount_cents = row->amount_cents;
@@ -440,10 +556,14 @@ int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
 
-        if (db_insert_transaction(db, &txn) < 0)
-            return -1;
+        if (db_insert_transaction(db, &txn) < 0) {
+            ret = -1;
+            break;
+        }
         (*imported)++;
     }
 
-    return 0;
+    free(existing);
+    free(consumed);
+    return ret;
 }

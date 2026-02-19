@@ -41,8 +41,8 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
                            int *imported, int *skipped);
 
 // Import checking/savings transactions into the given account.
-// Returns 0 on success, -1 on DB error. *imported is set.
+// Returns 0 on success, -1 on DB error. *imported and *skipped are set.
 int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
-                        int64_t account_id, int *imported);
+                        int64_t account_id, int *imported, int *skipped);
 
 #endif

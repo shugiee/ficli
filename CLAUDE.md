@@ -87,7 +87,7 @@ make clean    # clean build artifacts
 - [x] Data import (CSV) ([plan](../.claude/plans/csv-import.md))
 - [x] Make `s` for sort select columns in the correct order
 - [x] Add a Payee field to transactions
-- [ ] Prevent duplicate transactions when importing CSVs
+- [x] Prevent duplicate transactions when importing CSVs
 - [ ] Allow toggling light/dark mode
 - [ ] Add "Submit" button when adding an account
 - [ ] Show new account in Transactions view

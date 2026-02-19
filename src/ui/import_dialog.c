@@ -25,6 +25,7 @@ typedef struct {
     int64_t account_id;     // 0 = no matching account
     char account_name[64];
     int txn_count;
+    int dup_count;          // of txn_count, how many already exist in DB
 } card_entry_t;
 
 // Build a deduplicated list of cards from the parse result and match them
@@ -89,6 +90,46 @@ static int build_card_entries(const csv_parse_result_t *r, sqlite3 *db,
                 break;
             }
         }
+    }
+
+    // Compute dup_count for each matched card by checking existing DB transactions.
+    for (int ci = 0; ci < count; ci++) {
+        card_entry_t *ce = &cards[ci];
+        if (ce->account_id == 0)
+            continue;
+
+        txn_row_t *existing = NULL;
+        int nexisting = db_get_transactions(db, ce->account_id, &existing);
+        if (nexisting <= 0) {
+            free(existing);
+            continue;
+        }
+
+        bool *consumed = calloc(nexisting, sizeof(bool));
+        if (!consumed) {
+            free(existing);
+            continue;
+        }
+
+        for (int i = 0; i < r->row_count; i++) {
+            const csv_row_t *row = &r->rows[i];
+            if (strcmp(row->card_last4, ce->last4) != 0)
+                continue;
+            for (int j = 0; j < nexisting; j++) {
+                if (!consumed[j] &&
+                    existing[j].amount_cents == row->amount_cents &&
+                    existing[j].type == row->type &&
+                    strcmp(existing[j].date, row->date) == 0 &&
+                    strcmp(existing[j].payee, row->payee) == 0) {
+                    consumed[j] = true;
+                    ce->dup_count++;
+                    break;
+                }
+            }
+        }
+
+        free(consumed);
+        free(existing);
     }
 
     free(accounts);
@@ -289,12 +330,14 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
             curs_set(0);
 
             // Calculate import/skip counts
-            int will_import = 0, will_skip = 0;
+            int will_import = 0, will_dupes = 0, will_unmatched = 0;
             for (int i = 0; i < card_count; i++) {
-                if (cards[i].account_id)
-                    will_import += cards[i].txn_count;
-                else
-                    will_skip += cards[i].txn_count;
+                if (cards[i].account_id) {
+                    will_import += cards[i].txn_count - cards[i].dup_count;
+                    will_dupes += cards[i].dup_count;
+                } else {
+                    will_unmatched += cards[i].txn_count;
+                }
             }
 
             draw_border(w, win_h, win_w, " Import CSV \u2013 Credit Card ",
@@ -319,8 +362,8 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
 
             row++;
             if (row < win_h - 1) {
-                mvwprintw(w, row, 2, "Import: %d  Skip: %d",
-                          will_import, will_skip);
+                mvwprintw(w, row, 2, "Import: %d  Dupes: %d  No acct: %d",
+                          will_import, will_dupes, will_unmatched);
             }
 
             wrefresh(w);
@@ -399,16 +442,16 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
                 ret = -1;
             } else if (ch == '\n' || ch == KEY_ENTER) {
                 if (account_count > 0) {
-                    int imp = 0;
+                    int imp = 0, skp = 0;
                     int rc = csv_import_checking(db, &parse_result,
-                                                 accounts[acct_sel].id, &imp);
+                                                 accounts[acct_sel].id, &imp, &skp);
                     if (rc < 0) {
                         snprintf(path_error, sizeof(path_error),
                                  "Database error during import.");
                         stage = STAGE_ERROR;
                     } else {
                         result_count = imp;
-                        result_skipped = 0;
+                        result_skipped = skp;
                         ret = imp;
                         stage = STAGE_RESULT;
                     }
