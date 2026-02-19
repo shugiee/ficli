@@ -278,6 +278,40 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     if (ls->scroll_offset < 0)
         ls->scroll_offset = 0;
 
+    int left_col = 2;
+    int right_col = w - 2;
+    int gap = 2;
+    int max_name_len = 0;
+    int max_type_len = 0;
+    for (int i = 0; i < ls->account_count; i++) {
+        int name_len = (int)strlen(ls->accounts[i].name);
+        if (name_len > max_name_len)
+            max_name_len = name_len;
+
+        const char *tlabel = account_type_labels[ls->accounts[i].type];
+        char type_tag[32];
+        if (ls->accounts[i].type == ACCOUNT_CREDIT_CARD &&
+            ls->accounts[i].card_last4[0] != '\0') {
+            snprintf(type_tag, sizeof(type_tag), "[%s ****%s]", tlabel,
+                     ls->accounts[i].card_last4);
+        } else {
+            snprintf(type_tag, sizeof(type_tag), "[%s]", tlabel);
+        }
+        int type_len = (int)strlen(type_tag);
+        if (type_len > max_type_len)
+            max_type_len = type_len;
+    }
+
+    int type_col = left_col + max_name_len + gap;
+    int max_type_col = right_col - max_type_len;
+    if (type_col > max_type_col)
+        type_col = max_type_col;
+    if (type_col < left_col + gap + 1)
+        type_col = left_col + gap + 1;
+    int name_w = type_col - left_col - gap;
+    if (name_w < 1)
+        name_w = 1;
+
     for (int i = 0; i < visible_rows; i++) {
         int idx = ls->scroll_offset + i;
         if (idx >= ls->account_count)
@@ -292,14 +326,10 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
             wattron(win, A_REVERSE);
         }
 
-        // Format: "Name  [Type]"
-        char line[256];
-        snprintf(line, sizeof(line), " %-*s", w - 5, ls->accounts[idx].name);
-        mvwprintw(win, row, 2, "%s", line);
+        mvwprintw(win, row, left_col, "%-*.*s", right_col - left_col, right_col - left_col, "");
+        mvwprintw(win, row, left_col, "%-*.*s", name_w, name_w,
+                  ls->accounts[idx].name);
 
-        // Show type label (and card last 4 for credit cards) dimmed after name
-        int name_len = (int)strlen(ls->accounts[idx].name);
-        int type_col = 3 + name_len + 2;
         const char *tlabel = account_type_labels[ls->accounts[idx].type];
         char type_tag[32];
         if (ls->accounts[idx].type == ACCOUNT_CREDIT_CARD &&
@@ -309,7 +339,7 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
         } else {
             snprintf(type_tag, sizeof(type_tag), "[%s]", tlabel);
         }
-        if (type_col + (int)strlen(type_tag) < w - 2) {
+        if (type_col + (int)strlen(type_tag) < right_col) {
             wattron(win, A_DIM);
             mvwprintw(win, row, type_col, "%s", type_tag);
             wattroff(win, A_DIM);
