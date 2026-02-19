@@ -28,6 +28,20 @@ int db_get_categories(sqlite3 *db, category_type_t type, category_t **out);
 int64_t db_get_or_create_category(sqlite3 *db, category_type_t type,
                                   const char *name, int64_t parent_id);
 
+// Update category fields by id. parent_id <= 0 means top-level.
+// Returns 0 on success, -2 on uniqueness conflict, -1 on error.
+int db_update_category(sqlite3 *db, const category_t *category);
+
+// Count transactions referencing a category. Returns count, -1 on error.
+int db_count_transactions_for_category(sqlite3 *db, int64_t category_id);
+
+// Count direct child categories. Returns count, -1 on error.
+int db_count_child_categories(sqlite3 *db, int64_t category_id);
+
+// Delete category. Returns 0 success, -4 has child categories, -3 has related
+// transactions, -2 not found, -1 error.
+int db_delete_category(sqlite3 *db, int64_t category_id);
+
 // Insert a transaction. Returns new row id, -1 on error.
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn);
 

@@ -38,6 +38,10 @@ static const char *transaction_type_to_str(transaction_type_t type) {
     return transaction_type_db_strings[type];
 }
 
+static const char *category_type_to_str(category_type_t type) {
+    return (type == CATEGORY_INCOME) ? "INCOME" : "EXPENSE";
+}
+
 static int bind_text_or_null(sqlite3_stmt *stmt, int idx, const char *value) {
     if (value && value[0] != '\0')
         return sqlite3_bind_text(stmt, idx, value, -1, SQLITE_STATIC);
@@ -289,7 +293,7 @@ static int db_find_category_id(sqlite3 *db, category_type_t type,
     if (!db || !name || name[0] == '\0' || !out_id)
         return -1;
 
-    const char *type_str = (type == CATEGORY_INCOME) ? "INCOME" : "EXPENSE";
+    const char *type_str = category_type_to_str(type);
     sqlite3_stmt *stmt = NULL;
     int rc = SQLITE_OK;
 
@@ -353,7 +357,7 @@ int64_t db_get_or_create_category(sqlite3 *db, category_type_t type,
     if (found == 1)
         return existing_id;
 
-    const char *type_str = (type == CATEGORY_INCOME) ? "INCOME" : "EXPENSE";
+    const char *type_str = category_type_to_str(type);
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(
         db,
@@ -388,6 +392,148 @@ int64_t db_get_or_create_category(sqlite3 *db, category_type_t type,
     if (found == 1)
         return existing_id;
     return -1;
+}
+
+int db_update_category(sqlite3 *db, const category_t *category) {
+    if (!category || category->id <= 0 || category->name[0] == '\0')
+        return -1;
+    if (category->parent_id == category->id)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "UPDATE categories"
+        " SET name = ?, type = ?, parent_id = ?"
+        " WHERE id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_update_category prepare: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, category->name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, category_type_to_str(category->type), -1,
+                      SQLITE_STATIC);
+    if (category->parent_id > 0)
+        sqlite3_bind_int64(stmt, 3, category->parent_id);
+    else
+        sqlite3_bind_null(stmt, 3);
+    sqlite3_bind_int64(stmt, 4, category->id);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return 0;
+    if (rc == SQLITE_CONSTRAINT)
+        return -2;
+
+    fprintf(stderr, "db_update_category step: %s\n", sqlite3_errmsg(db));
+    return -1;
+}
+
+int db_count_transactions_for_category(sqlite3 *db, int64_t category_id) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db, "SELECT COUNT(*) FROM transactions WHERE category_id = ?", -1, &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_count_transactions_for_category prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_count_transactions_for_category step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+int db_count_child_categories(sqlite3 *db, int64_t category_id) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db, "SELECT COUNT(*) FROM categories WHERE parent_id = ?", -1, &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_count_child_categories prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_count_child_categories step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+int db_delete_category(sqlite3 *db, int64_t category_id) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM categories WHERE id = ?", -1,
+                                &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_category prepare exists: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return -2;
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_delete_category step exists: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int child_count = db_count_child_categories(db, category_id);
+    if (child_count < 0)
+        return -1;
+    if (child_count > 0)
+        return -4;
+
+    int txn_count = db_count_transactions_for_category(db, category_id);
+    if (txn_count < 0)
+        return -1;
+    if (txn_count > 0)
+        return -3;
+
+    rc = sqlite3_prepare_v2(db, "DELETE FROM categories WHERE id = ?", -1, &stmt,
+                            NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_category prepare delete: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_delete_category step delete: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    if (sqlite3_changes(db) == 0)
+        return -2;
+
+    return 0;
 }
 
 int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
@@ -633,7 +779,7 @@ int db_delete_account(sqlite3 *db, int64_t account_id, bool delete_transactions)
 int db_get_categories(sqlite3 *db, category_type_t type, category_t **out) {
     *out = NULL;
 
-    const char *type_str = (type == CATEGORY_EXPENSE) ? "EXPENSE" : "INCOME";
+    const char *type_str = category_type_to_str(type);
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,

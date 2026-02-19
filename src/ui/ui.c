@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 #include "ui/account_list.h"
+#include "ui/category_list.h"
 #include "ui/colors.h"
 #include "ui/form.h"
 #include "ui/import_dialog.h"
@@ -34,6 +35,7 @@ static struct {
     bool running;
     txn_list_state_t *txn_list;
     account_list_state_t *account_list;
+    category_list_state_t *category_list;
     bool dark_mode;
 } state;
 
@@ -85,6 +87,13 @@ static const help_row_t help_rows[] = {
     {"Shift+Tab / \u2191", "Previous field"},
     {"Ctrl+S", "Save"},
     {"Esc", "Cancel"},
+
+    {"", ""},
+    {NULL, "Categories"},
+    {"Enter", "Add category"},
+    {"e", "Edit selected category"},
+    {"d", "Delete selected category"},
+    {"\u2190 / \u2192", "Change type"},
 
     {"", ""},
     {NULL, "Accounts"},
@@ -303,6 +312,12 @@ static void ui_draw_content(void) {
             state.txn_list = txn_list_create(state.db);
         if (state.txn_list)
             txn_list_draw(state.txn_list, state.content, state.content_focused);
+    } else if (state.current_screen == SCREEN_CATEGORIES) {
+        if (!state.category_list)
+            state.category_list = category_list_create(state.db);
+        if (state.category_list)
+            category_list_draw(state.category_list, state.content,
+                               state.content_focused);
     } else if (state.current_screen == SCREEN_ACCOUNTS) {
         if (!state.account_list)
             state.account_list = account_list_create(state.db);
@@ -327,6 +342,11 @@ static void ui_draw_status(void) {
         state.txn_list) {
         mvwprintw(state.status, 0, 1, "%s",
                   txn_list_status_hint(state.txn_list));
+    } else if (state.content_focused &&
+               state.current_screen == SCREEN_CATEGORIES &&
+               state.category_list) {
+        mvwprintw(state.status, 0, 1, "%s",
+                  category_list_status_hint(state.category_list));
     } else if (state.content_focused &&
                state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
         mvwprintw(state.status, 0, 1, "%s",
@@ -465,6 +485,16 @@ static void ui_handle_input(int ch) {
                 return;
             }
         }
+        if (state.current_screen == SCREEN_CATEGORIES && state.category_list) {
+            if (category_list_handle_input(state.category_list, state.content,
+                                           ch)) {
+                if (category_list_consume_changed(state.category_list) &&
+                    state.txn_list) {
+                    txn_list_mark_dirty(state.txn_list);
+                }
+                return;
+            }
+        }
 
         // LEFT / h / Escape unfocus content if not consumed above
         if (ch == KEY_LEFT || ch == 'h' || ch == 27) {
@@ -494,6 +524,7 @@ static void ui_handle_input(int ch) {
     case 'l':
         state.current_screen = state.sidebar_sel;
         if (state.current_screen == SCREEN_TRANSACTIONS ||
+            state.current_screen == SCREEN_CATEGORIES ||
             state.current_screen == SCREEN_ACCOUNTS)
             state.content_focused = true;
         break;
@@ -578,6 +609,7 @@ void ui_run(sqlite3 *db) {
     state.running = true;
     state.txn_list = NULL;
     state.account_list = NULL;
+    state.category_list = NULL;
 
     ui_create_layout();
     refresh(); // sync stdscr so getch() won't blank the screen
@@ -592,5 +624,7 @@ void ui_run(sqlite3 *db) {
     state.txn_list = NULL;
     account_list_destroy(state.account_list);
     state.account_list = NULL;
+    category_list_destroy(state.category_list);
+    state.category_list = NULL;
     ui_destroy_layout();
 }

@@ -1486,6 +1486,289 @@ form_result_t form_account(WINDOW *parent, sqlite3 *db, account_t *account,
     return result;
 }
 
+#define CATEGORY_EDIT_FORM_WIDTH 56
+#define CATEGORY_EDIT_FORM_HEIGHT 11
+
+enum {
+    CATEGORY_FIELD_NAME,
+    CATEGORY_FIELD_TYPE,
+    CATEGORY_FIELD_SUBMIT,
+    CATEGORY_FIELD_COUNT
+};
+
+typedef struct {
+    WINDOW *win;
+    sqlite3 *db;
+    category_t *category;
+    bool is_edit;
+
+    int current_field;
+    char path[128];
+    int path_pos;
+    category_type_t type;
+    char error[80];
+} category_form_state_t;
+
+static const char *category_type_labels[] = {"Expense", "Income"};
+
+static category_type_t next_category_type(category_type_t type) {
+    return (type == CATEGORY_INCOME) ? CATEGORY_EXPENSE : CATEGORY_INCOME;
+}
+
+static category_type_t prev_category_type(category_type_t type) {
+    return next_category_type(type);
+}
+
+static int category_field_row(int field) { return 2 + field * 2; }
+
+static void category_edit_form_next_field(category_form_state_t *fs) {
+    if (fs->current_field < CATEGORY_FIELD_COUNT - 1)
+        fs->current_field++;
+}
+
+static void category_edit_form_prev_field(category_form_state_t *fs) {
+    if (fs->current_field > 0)
+        fs->current_field--;
+}
+
+static void category_edit_form_init(category_form_state_t *fs, sqlite3 *db,
+                                    category_t *category, bool is_edit) {
+    memset(fs, 0, sizeof(*fs));
+    fs->db = db;
+    fs->category = category;
+    fs->is_edit = is_edit;
+    fs->current_field = CATEGORY_FIELD_NAME;
+    fs->type = CATEGORY_EXPENSE;
+
+    if (is_edit && category) {
+        snprintf(fs->path, sizeof(fs->path), "%s", category->name);
+        fs->path_pos = (int)strlen(fs->path);
+        fs->type = category->type;
+    }
+}
+
+static void category_edit_form_draw(category_form_state_t *fs) {
+    WINDOW *w = fs->win;
+    werase(w);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+
+    const char *title = fs->is_edit ? " Edit Category " : " Add Category ";
+    int tw = (int)strlen(title);
+    int ww = getmaxx(w);
+    mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
+
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_NAME), LABEL_COL, "Name:");
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_TYPE), LABEL_COL, "Type:");
+
+    bool path_active = (fs->current_field == CATEGORY_FIELD_NAME);
+    if (path_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_NAME), FIELD_COL, "%-*s",
+              FIELD_WIDTH, "");
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_NAME), FIELD_COL, "%s",
+              fs->path);
+    if (path_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    bool type_active = (fs->current_field == CATEGORY_FIELD_TYPE);
+    if (type_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_TYPE), FIELD_COL, "%-*s",
+              FIELD_WIDTH, "");
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_TYPE), FIELD_COL, "< %-8s >",
+              category_type_labels[fs->type]);
+    if (type_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    const char *btn = "[ Submit ]";
+    int btn_len = (int)strlen(btn);
+    bool submit_active = (fs->current_field == CATEGORY_FIELD_SUBMIT);
+    if (submit_active)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    mvwprintw(w, category_field_row(CATEGORY_FIELD_SUBMIT), (ww - btn_len) / 2,
+              "%s", btn);
+    if (submit_active)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+
+    mvwprintw(w, CATEGORY_EDIT_FORM_HEIGHT - 2, LABEL_COL,
+              "Use Parent:Child for sub-categories");
+    if (fs->error[0] != '\0') {
+        wattron(w, A_BOLD);
+        mvwprintw(w, 1, LABEL_COL, "%s", fs->error);
+        wattroff(w, A_BOLD);
+    }
+
+    mvwprintw(w, CATEGORY_EDIT_FORM_HEIGHT - 1, 2, " C-s:Save  Esc:Cancel ");
+
+    if (fs->current_field == CATEGORY_FIELD_SUBMIT) {
+        curs_set(0);
+    } else {
+        curs_set(1);
+        if (fs->current_field == CATEGORY_FIELD_NAME)
+            wmove(w, category_field_row(CATEGORY_FIELD_NAME),
+                  FIELD_COL + fs->path_pos);
+        else
+            wmove(w, category_field_row(CATEGORY_FIELD_TYPE), FIELD_COL);
+    }
+
+    wrefresh(w);
+}
+
+static bool category_edit_form_validate_and_save(category_form_state_t *fs) {
+    fs->error[0] = '\0';
+
+    char parent_name[64];
+    char child_name[64];
+    bool has_parent = false;
+    if (!parse_category_path(fs->path, parent_name, sizeof(parent_name), child_name,
+                             sizeof(child_name), &has_parent)) {
+        snprintf(fs->error, sizeof(fs->error), "Invalid category path");
+        fs->current_field = CATEGORY_FIELD_NAME;
+        return false;
+    }
+
+    int64_t parent_id = 0;
+    if (has_parent) {
+        parent_id = db_get_or_create_category(fs->db, fs->type, parent_name, 0);
+        if (parent_id <= 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+    }
+
+    if (fs->is_edit) {
+        category_t updated = {0};
+        if (fs->category)
+            updated.id = fs->category->id;
+        updated.type = fs->type;
+        updated.parent_id = parent_id;
+        snprintf(updated.name, sizeof(updated.name), "%s", child_name);
+        int rc = db_update_category(fs->db, &updated);
+        if (rc == -2) {
+            snprintf(fs->error, sizeof(fs->error), "Category already exists");
+            return false;
+        }
+        if (rc < 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+        if (fs->category) {
+            *fs->category = updated;
+            snprintf(fs->category->name, sizeof(fs->category->name), "%s",
+                     child_name);
+        }
+    } else {
+        int64_t id =
+            db_get_or_create_category(fs->db, fs->type, child_name, parent_id);
+        if (id <= 0) {
+            snprintf(fs->error, sizeof(fs->error), "Database error");
+            return false;
+        }
+        if (fs->category) {
+            fs->category->id = id;
+            fs->category->type = fs->type;
+            fs->category->parent_id = parent_id;
+            snprintf(fs->category->name, sizeof(fs->category->name), "%s",
+                     child_name);
+        }
+    }
+
+    return true;
+}
+
+form_result_t form_category(WINDOW *parent, sqlite3 *db, category_t *category,
+                            bool is_edit) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    if (ph < CATEGORY_EDIT_FORM_HEIGHT || pw < CATEGORY_EDIT_FORM_WIDTH)
+        return FORM_CANCELLED;
+
+    category_form_state_t fs;
+    category_edit_form_init(&fs, db, category, is_edit);
+
+    int start_y, start_x;
+    getbegyx(parent, start_y, start_x);
+    int form_y = start_y + (ph - CATEGORY_EDIT_FORM_HEIGHT) / 2;
+    int form_x = start_x + (pw - CATEGORY_EDIT_FORM_WIDTH) / 2;
+    fs.win = newwin(CATEGORY_EDIT_FORM_HEIGHT, CATEGORY_EDIT_FORM_WIDTH, form_y,
+                    form_x);
+    keypad(fs.win, TRUE);
+    curs_set(1);
+
+    form_result_t result = FORM_CANCELLED;
+    bool done = false;
+    while (!done) {
+        category_edit_form_draw(&fs);
+        int ch = wgetch(fs.win);
+        fs.error[0] = '\0';
+
+        switch (ch) {
+        case 27:
+        case KEY_EXIT:
+            done = true;
+            break;
+        case 19: // Ctrl+S
+            if (category_edit_form_validate_and_save(&fs)) {
+                result = FORM_SAVED;
+                done = true;
+            }
+            break;
+        case '\t':
+        case KEY_DOWN:
+            category_edit_form_next_field(&fs);
+            break;
+        case KEY_BTAB:
+        case KEY_UP:
+            category_edit_form_prev_field(&fs);
+            break;
+        case '\n':
+        case ' ':
+            if (fs.current_field == CATEGORY_FIELD_SUBMIT) {
+                if (category_edit_form_validate_and_save(&fs)) {
+                    result = FORM_SAVED;
+                    done = true;
+                }
+            } else if (fs.current_field == CATEGORY_FIELD_TYPE) {
+                fs.type = next_category_type(fs.type);
+            } else if (fs.current_field == CATEGORY_FIELD_NAME) {
+                handle_text_input(fs.path, &fs.path_pos, (int)sizeof(fs.path), ch,
+                                  false);
+            }
+            break;
+        case KEY_LEFT:
+            if (fs.current_field == CATEGORY_FIELD_TYPE) {
+                fs.type = prev_category_type(fs.type);
+            } else if (fs.current_field == CATEGORY_FIELD_NAME) {
+                handle_text_input(fs.path, &fs.path_pos, (int)sizeof(fs.path), ch,
+                                  false);
+            }
+            break;
+        case KEY_RIGHT:
+            if (fs.current_field == CATEGORY_FIELD_TYPE) {
+                fs.type = next_category_type(fs.type);
+            } else if (fs.current_field == CATEGORY_FIELD_NAME) {
+                handle_text_input(fs.path, &fs.path_pos, (int)sizeof(fs.path), ch,
+                                  false);
+            }
+            break;
+        case KEY_RESIZE:
+            done = true;
+            break;
+        default:
+            if (fs.current_field == CATEGORY_FIELD_NAME) {
+                handle_text_input(fs.path, &fs.path_pos, (int)sizeof(fs.path), ch,
+                                  false);
+            }
+            break;
+        }
+    }
+
+    curs_set(0);
+    delwin(fs.win);
+    return result;
+}
+
 form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                bool is_edit) {
     int ph, pw;

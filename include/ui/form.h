@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 #include "models/account.h"
+#include "models/category.h"
 #include "models/transaction.h"
 
 typedef enum {
@@ -23,5 +24,10 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
 
 // Show modal account form. Returns FORM_SAVED or FORM_CANCELLED.
 form_result_t form_account(WINDOW *parent, sqlite3 *db, account_t *account, bool is_edit);
+
+// Show modal category form. Name accepts "Parent:Child" path format.
+// Returns FORM_SAVED or FORM_CANCELLED.
+form_result_t form_category(WINDOW *parent, sqlite3 *db, category_t *category,
+                            bool is_edit);
 
 #endif
