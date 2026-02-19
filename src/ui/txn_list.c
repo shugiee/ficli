@@ -762,6 +762,22 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
             }
         }
         return true;
+    case 'c':
+        if (ls->display_count <= 0)
+            return true;
+        {
+            transaction_t txn = {0};
+            int rc = db_get_transaction_by_id(
+                ls->db, (int)ls->display[ls->cursor].id, &txn);
+            if (rc == 0 && txn.type != TRANSACTION_TRANSFER) {
+                form_result_t res = form_transaction_category(parent, ls->db, &txn);
+                if (res == FORM_SAVED)
+                    ls->dirty = true;
+            } else if (rc != 0) {
+                ls->dirty = true;
+            }
+        }
+        return true;
     case 'd':
         if (ls->display_count <= 0)
             return true;
@@ -802,7 +818,7 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
 
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
     snprintf(buf, sizeof(buf),
-             "\u2191\u2193 move  e edit  d delete  %s  s sort  S dir  1-9 acct "
+             "\u2191\u2193 move  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
              " a add  \u2190 back",
              filter_tag);
     return buf;

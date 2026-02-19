@@ -12,6 +12,9 @@
 
 #define FORM_WIDTH 50
 #define FORM_HEIGHT 21
+#define CATEGORY_FORM_WIDTH 52
+#define CATEGORY_FORM_HEIGHT 12
+#define CATEGORY_FIELD_ROW 2
 #define LABEL_COL 2
 #define FIELD_COL 16
 #define FIELD_WIDTH 30
@@ -488,6 +491,116 @@ static void form_close_dropdown(form_state_t *fs, bool accept) {
     }
     fs->dropdown_open = false;
     fs->dropdown_scroll = 0;
+}
+
+static void maybe_propagate_category_to_payee(WINDOW *parent, form_state_t *fs);
+
+static void category_form_draw(form_state_t *fs) {
+    WINDOW *w = fs->win;
+    werase(w);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+
+    const char *title = " Edit Category ";
+    int ww = getmaxx(w);
+    int tw = (int)strlen(title);
+    mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
+
+    mvwprintw(w, CATEGORY_FIELD_ROW, LABEL_COL, "Category:");
+    if (!fs->dropdown_open)
+        wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "%-*s", FIELD_WIDTH, "");
+    if (fs->category_count > 0) {
+        mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "%s [v]",
+                  fs->categories[fs->category_sel].name);
+    } else {
+        mvwprintw(w, CATEGORY_FIELD_ROW, FIELD_COL, "(none)");
+    }
+    if (!fs->dropdown_open)
+        wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+    if (fs->error[0] != '\0') {
+        wattron(w, A_BOLD);
+        mvwprintw(w, CATEGORY_FORM_HEIGHT - 2, LABEL_COL, "%s", fs->error);
+        wattroff(w, A_BOLD);
+    }
+
+    mvwprintw(w, CATEGORY_FORM_HEIGHT - 1, 2,
+              " \u2191\u2193:Select  Enter:Apply  n:New Category  Esc:Cancel ");
+    curs_set(0);
+    wrefresh(w);
+}
+
+static void category_form_draw_dropdown(form_state_t *fs) {
+    WINDOW *w = fs->win;
+    int count = fs->category_count + 1;
+    int base_row = CATEGORY_FIELD_ROW + 1;
+    int visible = count < MAX_DROP ? count : MAX_DROP;
+
+    if (fs->dropdown_sel < fs->dropdown_scroll)
+        fs->dropdown_scroll = fs->dropdown_sel;
+    if (fs->dropdown_sel >= fs->dropdown_scroll + visible)
+        fs->dropdown_scroll = fs->dropdown_sel - visible + 1;
+
+    for (int i = 0; i < visible; i++) {
+        int idx = fs->dropdown_scroll + i;
+        bool selected = (idx == fs->dropdown_sel);
+        if (selected)
+            wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+
+        const char *name =
+            (idx == fs->category_count) ? "<Add category>"
+                                        : fs->categories[idx].name;
+        mvwprintw(w, base_row + i, FIELD_COL, "%-*s", FIELD_WIDTH, name);
+
+        if (selected)
+            wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+    }
+
+    if (fs->dropdown_scroll > 0)
+        mvwaddch(w, base_row, FIELD_COL + FIELD_WIDTH, ACS_UARROW);
+    if (fs->dropdown_scroll + visible < count)
+        mvwaddch(w, base_row + visible - 1, FIELD_COL + FIELD_WIDTH,
+                 ACS_DARROW);
+
+    wrefresh(w);
+}
+
+static bool form_save_category_only(WINDOW *parent, form_state_t *fs) {
+    fs->error[0] = '\0';
+    fs->offer_category_propagation = false;
+
+    if (!fs->txn || fs->txn_type == TRANSACTION_TRANSFER ||
+        fs->category_count <= 0) {
+        snprintf(fs->error, sizeof(fs->error), "No category available");
+        return false;
+    }
+
+    int64_t prior_category_id = fs->txn->category_id;
+    transaction_t txn = *fs->txn;
+    txn.category_id = fs->categories[fs->category_sel].id;
+    txn.transfer_id = 0;
+
+    int rc = db_update_transaction(fs->db, &txn);
+    if (rc == -2) {
+        snprintf(fs->error, sizeof(fs->error), "Transaction not found");
+        return false;
+    }
+    if (rc < 0) {
+        snprintf(fs->error, sizeof(fs->error), "Database error");
+        return false;
+    }
+
+    *fs->txn = txn;
+
+    if (prior_category_id <= 0 && txn.category_id > 0 && txn.payee[0] != '\0') {
+        fs->offer_category_propagation = true;
+        fs->offer_type = txn.type;
+        fs->offer_category_id = txn.category_id;
+        snprintf(fs->offer_payee, sizeof(fs->offer_payee), "%s", txn.payee);
+    }
+    maybe_propagate_category_to_payee(parent, fs);
+    return true;
 }
 
 static transaction_type_t next_type(transaction_type_t type) {
@@ -1578,6 +1691,112 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                 handle_text_input(fs.desc, &fs.desc_pos, (int)sizeof(fs.desc),
                                   ch, false);
             }
+            break;
+        }
+    }
+
+    curs_set(0);
+    form_cleanup_state(&fs);
+    return result;
+}
+
+form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
+                                        transaction_t *txn) {
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    if (ph < CATEGORY_FORM_HEIGHT || pw < CATEGORY_FORM_WIDTH || !txn)
+        return FORM_CANCELLED;
+    if (txn->type == TRANSACTION_TRANSFER)
+        return FORM_CANCELLED;
+
+    form_state_t fs;
+    form_init_state(&fs, db, txn, true);
+    fs.current_field = FIELD_CATEGORY;
+    fs.error[0] = '\0';
+
+    int start_y, start_x;
+    getbegyx(parent, start_y, start_x);
+    int form_y = start_y + (ph - CATEGORY_FORM_HEIGHT) / 2;
+    int form_x = start_x + (pw - CATEGORY_FORM_WIDTH) / 2;
+
+    fs.win = newwin(CATEGORY_FORM_HEIGHT, CATEGORY_FORM_WIDTH, form_y, form_x);
+    keypad(fs.win, TRUE);
+    curs_set(0);
+
+    form_result_t result = FORM_CANCELLED;
+    bool done = false;
+    form_open_dropdown(&fs);
+
+    while (!done) {
+        category_form_draw(&fs);
+        if (fs.dropdown_open)
+            category_form_draw_dropdown(&fs);
+
+        int ch = wgetch(fs.win);
+        fs.error[0] = '\0';
+
+        if (fs.dropdown_open) {
+            int count = fs.category_count + 1;
+            switch (ch) {
+            case KEY_UP:
+            case 'k':
+                if (fs.dropdown_sel > 0)
+                    fs.dropdown_sel--;
+                break;
+            case KEY_DOWN:
+            case 'j':
+                if (fs.dropdown_sel < count - 1)
+                    fs.dropdown_sel++;
+                break;
+            case '\n':
+                if (fs.dropdown_sel == fs.category_count) {
+                    form_close_dropdown(&fs, false);
+                    if (form_create_category_on_the_fly(parent, &fs)) {
+                        if (form_save_category_only(parent, &fs)) {
+                            result = FORM_SAVED;
+                            done = true;
+                        }
+                    } else if (fs.error[0] == '\0') {
+                        form_open_dropdown(&fs);
+                    }
+                } else {
+                    fs.category_sel = fs.dropdown_sel;
+                    if (form_save_category_only(parent, &fs)) {
+                        result = FORM_SAVED;
+                        done = true;
+                    }
+                }
+                break;
+            case 27:
+            case KEY_EXIT:
+                done = true;
+                break;
+            }
+            continue;
+        }
+
+        switch (ch) {
+        case 27:
+        case KEY_EXIT:
+            done = true;
+            break;
+        case 'n':
+        case 'N':
+            if (form_create_category_on_the_fly(parent, &fs)) {
+                if (form_save_category_only(parent, &fs)) {
+                    result = FORM_SAVED;
+                    done = true;
+                }
+            }
+            break;
+        case '\n':
+        case ' ':
+            form_open_dropdown(&fs);
+            break;
+        case KEY_RESIZE:
+            done = true;
+            break;
+        default:
             break;
         }
     }

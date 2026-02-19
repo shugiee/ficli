@@ -95,8 +95,8 @@ make clean    # clean build artifacts
 - [x] Show summary information in header
 - [x] When adding category to a transaction, offer to apply same change to all transactions with the same payee and no category
 - [x] Allow user to add new category on the fly when categorizing a transaction, including sub-category support (e.g., "Food:Dining Out") ([plan](../.claude/plans/on-the-fly-category-creation.md))
-- [ ] Allow user to edit only category by hitting `c` on a transaction, without opening the full edit form
-- [ ] Allow bulk editing transactions (e.g., for categorization)
+- [x] Allow user to edit only category by hitting `c` on a transaction, without opening the full edit form ([plan](../.claude/plans/quick-category-edit-shortcut.md))
+- [ ] Allow bulk editing transactions (e.g., for categorization), maybe by selecting multiple transactions with spacebar and then hitting `e` to edit all selected transactions
 - [ ] Summary/report views
 - [ ] Allow user to type to filter dropdowns
 - [ ] Show chart of account balance over time

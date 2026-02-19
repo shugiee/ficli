@@ -60,6 +60,7 @@ static const help_row_t help_rows[] = {
     {"", ""},
     {NULL, "Transactions list"},
     {"e", "Edit selected"},
+    {"c", "Edit category only"},
     {"d", "Delete selected"},
     {"/", "Filter"},
     {"s", "Cycle sort column"},
