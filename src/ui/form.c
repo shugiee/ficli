@@ -385,7 +385,7 @@ static void form_draw(form_state_t *fs) {
         }
     }
 
-    wrefresh(w);
+    wnoutrefresh(w);
 }
 
 static void form_draw_dropdown(form_state_t *fs) {
@@ -413,8 +413,11 @@ static void form_draw_dropdown(form_state_t *fs) {
         int idx = fs->dropdown_scroll + i;
         bool selected = (idx == fs->dropdown_sel);
 
-        if (selected)
+        if (selected) {
             wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        } else {
+            wattron(w, COLOR_PAIR(COLOR_FORM_DROPDOWN));
+        }
 
         const char *name;
         if (fs->current_field == FIELD_ACCOUNT)
@@ -428,8 +431,11 @@ static void form_draw_dropdown(form_state_t *fs) {
 
         mvwprintw(w, base_row + i, FIELD_COL, "%-*s", FIELD_WIDTH, name);
 
-        if (selected)
+        if (selected) {
             wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        } else {
+            wattroff(w, COLOR_PAIR(COLOR_FORM_DROPDOWN));
+        }
     }
 
     // Show scroll indicators
@@ -440,7 +446,7 @@ static void form_draw_dropdown(form_state_t *fs) {
                  ACS_DARROW);
 
     wmove(w, base_row + fs->dropdown_sel - fs->dropdown_scroll, FIELD_COL);
-    wrefresh(w);
+    wnoutrefresh(w);
 }
 
 static void form_open_dropdown(form_state_t *fs) {
@@ -528,7 +534,7 @@ static void category_form_draw(form_state_t *fs) {
     mvwprintw(w, CATEGORY_FORM_HEIGHT - 1, 2,
               " \u2191\u2193:Select  Enter:Apply  n:New Category  Esc:Cancel ");
     curs_set(0);
-    wrefresh(w);
+    wnoutrefresh(w);
 }
 
 static void category_form_draw_dropdown(form_state_t *fs) {
@@ -545,16 +551,22 @@ static void category_form_draw_dropdown(form_state_t *fs) {
     for (int i = 0; i < visible; i++) {
         int idx = fs->dropdown_scroll + i;
         bool selected = (idx == fs->dropdown_sel);
-        if (selected)
+        if (selected) {
             wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        } else {
+            wattron(w, COLOR_PAIR(COLOR_FORM_DROPDOWN));
+        }
 
         const char *name =
             (idx == fs->category_count) ? "<Add category>"
                                         : fs->categories[idx].name;
         mvwprintw(w, base_row + i, FIELD_COL, "%-*s", FIELD_WIDTH, name);
 
-        if (selected)
+        if (selected) {
             wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        } else {
+            wattroff(w, COLOR_PAIR(COLOR_FORM_DROPDOWN));
+        }
     }
 
     if (fs->dropdown_scroll > 0)
@@ -563,7 +575,7 @@ static void category_form_draw_dropdown(form_state_t *fs) {
         mvwaddch(w, base_row + visible - 1, FIELD_COL + FIELD_WIDTH,
                  ACS_DARROW);
 
-    wrefresh(w);
+    wnoutrefresh(w);
 }
 
 static bool form_save_category_only(WINDOW *parent, form_state_t *fs) {
@@ -1504,6 +1516,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
         form_draw(&fs);
         if (fs.dropdown_open)
             form_draw_dropdown(&fs);
+        doupdate();
 
         int ch = wgetch(fs.win);
         fs.error[0] = '\0';
@@ -1731,6 +1744,7 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
         category_form_draw(&fs);
         if (fs.dropdown_open)
             category_form_draw_dropdown(&fs);
+        doupdate();
 
         int ch = wgetch(fs.win);
         fs.error[0] = '\0';

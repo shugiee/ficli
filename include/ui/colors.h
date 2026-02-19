@@ -11,6 +11,7 @@
 #define CUST_PURPLE 21
 #define CUST_AQUA   22
 #define CUST_FG     23
+#define CUST_SURFACE 24
 
 // Color pair indices — shared by all UI modules.
 #define COLOR_NORMAL      1  // CUST_FG on CUST_BG — default text
@@ -22,3 +23,4 @@
 #define COLOR_EXPENSE     7  // CUST_RED on CUST_BG — expense amounts
 #define COLOR_INCOME      8  // CUST_GREEN on CUST_BG — income amounts
 #define COLOR_INFO        9  // CUST_AQUA on CUST_BG — info text
+#define COLOR_FORM_DROPDOWN 10 // CUST_BG on CUST_SURFACE — dropdown layer

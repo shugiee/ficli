@@ -211,6 +211,8 @@ static void ui_apply_theme(bool dark_mode) {
         init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
         init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
         init_color(CUST_FG,     HEX_NC(0xd3), HEX_NC(0xc6), HEX_NC(0xaa));
+        // Slightly lighter than dark background for layered dropdowns
+        init_color(CUST_SURFACE, HEX_NC(0x37), HEX_NC(0x40), HEX_NC(0x46));
     } else {
         // Everforest Light (Medium)
         init_color(CUST_BG,     HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
@@ -221,6 +223,8 @@ static void ui_apply_theme(bool dark_mode) {
         init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
         init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
         init_color(CUST_FG,     HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
+        // Slightly darker than light background for layered dropdowns
+        init_color(CUST_SURFACE, HEX_NC(0xf3), HEX_NC(0xec), HEX_NC(0xd9));
     }
 #undef HEX_NC
 
@@ -233,6 +237,7 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
     init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
     init_pair(COLOR_INFO,        CUST_AQUA,  CUST_BG);
+    init_pair(COLOR_FORM_DROPDOWN, CUST_FG,  CUST_SURFACE);
 }
 
 static void ui_create_layout(void) {
