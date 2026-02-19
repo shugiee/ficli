@@ -90,14 +90,14 @@ static const help_row_t help_rows[] = {
 
     {"", ""},
     {NULL, "Categories"},
-    {"Enter", "Add category"},
+    {"Enter", "Show add category form"},
     {"e", "Edit selected category"},
     {"d", "Delete selected category"},
     {"\u2190 / \u2192", "Change type"},
 
     {"", ""},
     {NULL, "Accounts"},
-    {"Enter", "Add account"},
+    {"Enter", "Show add account form"},
     {"e", "Edit selected account"},
     {"d", "Delete selected account"},
     {"\u2190 / \u2192", "Change type"},

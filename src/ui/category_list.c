@@ -12,24 +12,18 @@
 
 static const char *category_type_labels[] = {"Expense", "Income"};
 
-// Layout constants (rows inside box border)
-// row 1: "Add Category:" label
-// row 2: category name/path input field
-// row 3: type selector
-// row 4: blank
-// row 5: submit button
-// row 6: message / blank
-// row 7: "Categories" header (bold)
-// row 8: horizontal rule
-// data starts at row 9
-#define DATA_ROW_START 9
+#define CURSOR_NAME -1
+#define CURSOR_TYPE -2
+#define CURSOR_SUBMIT -3
+#define CURSOR_ADD_BUTTON -4
 
 struct category_list_state {
     sqlite3 *db;
     category_t *categories;
     int category_count;
-    int cursor; // -1 = name input, -2 = type selector, -3 = submit, 0+ = list
+    int cursor; // negative = controls, 0+ = list
     int scroll_offset;
+    bool show_add_form;
     char name_buf[64];
     int name_pos;
     category_type_t type_sel;
@@ -175,8 +169,9 @@ static void reload(category_list_state_t *ls) {
     free(expense);
     free(income);
 
-    if (ls->cursor > 0 && ls->cursor >= ls->category_count)
-        ls->cursor = ls->category_count > 0 ? ls->category_count - 1 : -1;
+    if (ls->cursor >= 0 && ls->cursor >= ls->category_count)
+        ls->cursor =
+            ls->category_count > 0 ? ls->category_count - 1 : CURSOR_ADD_BUTTON;
 
     ls->dirty = false;
 }
@@ -186,7 +181,7 @@ category_list_state_t *category_list_create(sqlite3 *db) {
     if (!ls)
         return NULL;
     ls->db = db;
-    ls->cursor = -1; // start focused on name input
+    ls->cursor = CURSOR_ADD_BUTTON;
     ls->type_sel = CATEGORY_EXPENSE;
     ls->dirty = true;
     return ls;
@@ -233,67 +228,89 @@ void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
     if (field_w > 60)
         field_w = 60;
 
-    wattron(win, A_BOLD);
-    mvwprintw(win, 1, 2, "Add Category:");
-    wattroff(win, A_BOLD);
+    bool add_button_active = (ls->cursor == CURSOR_ADD_BUTTON && focused);
+    if (add_button_active)
+        wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    mvwprintw(win, 1, 2, "[ Add Category ]");
+    if (add_button_active)
+        wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
 
-    bool name_active = (ls->cursor == -1 && focused);
-    if (name_active)
-        wattron(win, COLOR_PAIR(COLOR_SELECTED));
-    mvwprintw(win, 2, 2, "%-*.*s", field_w, field_w, "");
-    mvwprintw(win, 2, 2, "%s", ls->name_buf);
-    if (name_active) {
-        wattroff(win, COLOR_PAIR(COLOR_SELECTED));
-        curs_set(1);
-        wmove(win, 2, 2 + ls->name_pos);
+    int message_row = 2;
+    int header_row = 3;
+    int rule_row = 4;
+    int data_row_start = 5;
+
+    if (ls->show_add_form) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, 2, 2, "New Category");
+        wattroff(win, A_BOLD);
+
+        bool name_active = (ls->cursor == CURSOR_NAME && focused);
+        if (name_active)
+            wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        mvwprintw(win, 3, 2, "%-*.*s", field_w, field_w, "");
+        mvwprintw(win, 3, 2, "%s", ls->name_buf);
+        if (name_active) {
+            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+            curs_set(1);
+            wmove(win, 3, 2 + ls->name_pos);
+        } else {
+            curs_set(0);
+        }
+
+        bool type_active = (ls->cursor == CURSOR_TYPE && focused);
+        mvwprintw(win, 4, 2, "Type: ");
+        if (type_active)
+            wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        mvwprintw(win, 4, 8, "< %-8s >", category_type_labels[ls->type_sel]);
+        if (type_active)
+            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+
+        bool submit_active = (ls->cursor == CURSOR_SUBMIT && focused);
+        if (submit_active)
+            wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+        mvwprintw(win, 6, 2, "[ Submit ]");
+        if (submit_active)
+            wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+
+        message_row = 7;
+        header_row = 8;
+        rule_row = 9;
+        data_row_start = 10;
     } else {
         curs_set(0);
     }
 
-    bool type_active = (ls->cursor == -2 && focused);
-    mvwprintw(win, 3, 2, "Type: ");
-    if (type_active)
-        wattron(win, COLOR_PAIR(COLOR_SELECTED));
-    mvwprintw(win, 3, 8, "< %-8s >", category_type_labels[ls->type_sel]);
-    if (type_active)
-        wattroff(win, COLOR_PAIR(COLOR_SELECTED));
-
-    bool submit_active = (ls->cursor == -3 && focused);
-    if (submit_active)
-        wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-    mvwprintw(win, 5, 2, "[ Submit ]");
-    if (submit_active)
-        wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-
     if (ls->message[0] != '\0')
-        mvwprintw(win, 6, 2, "%s", ls->message);
+        mvwprintw(win, message_row, 2, "%s", ls->message);
     else
-        mvwprintw(win, 6, 2, "%-*s", field_w + 10, "");
+        mvwprintw(win, message_row, 2, "%-*s", field_w + 10, "");
 
     wattron(win, A_BOLD);
-    mvwprintw(win, 7, 2, "Categories");
+    mvwprintw(win, header_row, 2, "Categories");
     wattroff(win, A_BOLD);
 
-    wmove(win, 8, 2);
+    wmove(win, rule_row, 2);
     for (int i = 2; i < w - 2; i++)
         waddch(win, ACS_HLINE);
 
-    int visible_rows = h - 1 - DATA_ROW_START;
+    int visible_rows = h - 1 - data_row_start;
     if (visible_rows < 1)
         visible_rows = 1;
 
     if (ls->category_count == 0) {
         const char *msg = "No categories";
         int mlen = (int)strlen(msg);
-        int row = DATA_ROW_START + visible_rows / 2;
+        int row = data_row_start + visible_rows / 2;
         if (row >= h - 1)
-            row = DATA_ROW_START;
+            row = data_row_start;
         mvwprintw(win, row, (w - mlen) / 2, "%s", msg);
         return;
     }
 
     if (ls->cursor >= ls->category_count)
-        ls->cursor = ls->category_count - 1;
+        ls->cursor = ls->category_count > 0 ? ls->category_count - 1
+                                             : CURSOR_ADD_BUTTON;
     if (ls->cursor >= 0) {
         if (ls->cursor < ls->scroll_offset)
             ls->scroll_offset = ls->cursor;
@@ -308,7 +325,7 @@ void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
         if (idx >= ls->category_count)
             break;
 
-        int row = DATA_ROW_START + i;
+        int row = data_row_start + i;
         bool selected = (idx == ls->cursor);
         if (selected) {
             if (!focused)
@@ -339,7 +356,7 @@ void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
     }
 }
 
-static void submit_category(category_list_state_t *ls) {
+static bool submit_category(category_list_state_t *ls) {
     char parent_name[64];
     char child_name[64];
     bool has_parent = false;
@@ -347,7 +364,7 @@ static void submit_category(category_list_state_t *ls) {
     if (!parse_category_path(ls->name_buf, parent_name, sizeof(parent_name),
                              child_name, sizeof(child_name), &has_parent)) {
         snprintf(ls->message, sizeof(ls->message), "Invalid category path");
-        return;
+        return false;
     }
 
     int64_t parent_id = 0;
@@ -355,7 +372,7 @@ static void submit_category(category_list_state_t *ls) {
         parent_id = db_get_or_create_category(ls->db, ls->type_sel, parent_name, 0);
         if (parent_id <= 0) {
             snprintf(ls->message, sizeof(ls->message), "Error adding category");
-            return;
+            return false;
         }
     }
 
@@ -363,6 +380,7 @@ static void submit_category(category_list_state_t *ls) {
                                            parent_id);
     if (id <= 0) {
         snprintf(ls->message, sizeof(ls->message), "Error adding category");
+        return false;
     } else {
         snprintf(ls->message, sizeof(ls->message), "Saved: %.72s", ls->name_buf);
         ls->name_buf[0] = '\0';
@@ -370,15 +388,41 @@ static void submit_category(category_list_state_t *ls) {
         ls->type_sel = CATEGORY_EXPENSE;
         ls->dirty = true;
         ls->changed = true;
+        return true;
     }
 }
 
 bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int ch) {
     ls->message[0] = '\0';
 
-    if (ls->cursor == -1) {
+    if (!ls->show_add_form && ls->cursor == CURSOR_ADD_BUTTON) {
+        switch (ch) {
+        case '\n':
+            ls->show_add_form = true;
+            ls->cursor = CURSOR_NAME;
+            return true;
+        case KEY_DOWN:
+        case 'j':
+            if (ls->category_count > 0)
+                ls->cursor = 0;
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    if (ls->show_add_form && ls->cursor == CURSOR_NAME) {
+        if (ch == 27) {
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
+        }
+        if (ch == KEY_UP || ch == 'k') {
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
+        }
         if (ch == KEY_DOWN || ch == '\n') {
-            ls->cursor = -2;
+            ls->cursor = CURSOR_TYPE;
             return true;
         }
         handle_text_input(ls->name_buf, &ls->name_pos, (int)sizeof(ls->name_buf),
@@ -386,16 +430,20 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         return true;
     }
 
-    if (ls->cursor == -2) {
+    if (ls->show_add_form && ls->cursor == CURSOR_TYPE) {
         switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
         case KEY_UP:
         case 'k':
-            ls->cursor = -1;
+            ls->cursor = CURSOR_NAME;
             return true;
         case KEY_DOWN:
         case 'j':
         case '\n':
-            ls->cursor = -3;
+            ls->cursor = CURSOR_SUBMIT;
             return true;
         case KEY_LEFT:
         case 'h':
@@ -412,11 +460,15 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         }
     }
 
-    if (ls->cursor == -3) {
+    if (ls->show_add_form && ls->cursor == CURSOR_SUBMIT) {
         switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
         case KEY_UP:
         case 'k':
-            ls->cursor = -2;
+            ls->cursor = CURSOR_TYPE;
             return true;
         case KEY_DOWN:
         case 'j':
@@ -424,7 +476,10 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
                 ls->cursor = 0;
             return true;
         case '\n':
-            submit_category(ls);
+            if (submit_category(ls)) {
+                ls->show_add_form = false;
+                ls->cursor = CURSOR_ADD_BUTTON;
+            }
             return true;
         default:
             return false;
@@ -497,7 +552,7 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         if (ls->cursor > 0) {
             ls->cursor--;
         } else {
-            ls->cursor = -3;
+            ls->cursor = CURSOR_ADD_BUTTON;
         }
         return true;
     case KEY_DOWN:
@@ -507,11 +562,12 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         return true;
     case KEY_HOME:
     case 'g':
-        ls->cursor = -1;
+        ls->cursor = CURSOR_ADD_BUTTON;
         return true;
     case KEY_END:
     case 'G':
-        ls->cursor = ls->category_count > 0 ? ls->category_count - 1 : 0;
+        ls->cursor = ls->category_count > 0 ? ls->category_count - 1
+                                            : CURSOR_ADD_BUTTON;
         return true;
     default:
         return false;
@@ -519,10 +575,14 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
 }
 
 const char *category_list_status_hint(const category_list_state_t *ls) {
-    if (ls->cursor == -1)
-        return "q:Quit  Enter:Next  Type Parent:Child for sub-categories  \u2190:Sidebar";
-    if (ls->cursor == -2)
-        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:Submit  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_ADD_BUTTON)
+        return "q:Quit  Enter:Show Add Form  \u2193:List  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_NAME)
+        return "q:Quit  Enter:Next  Type Parent:Child  Esc:Close Form  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_TYPE)
+        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:Submit  Esc:Close Form";
+    if (ls->cursor == CURSOR_SUBMIT)
+        return "q:Quit  Enter:Submit  \u2191:Type  \u2193:List  Esc:Close Form";
     return "q:Quit  \u2191\u2193:Navigate  e:Edit  d:Delete  \u2190:Sidebar";
 }
 

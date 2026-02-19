@@ -14,25 +14,19 @@ static const char *account_type_labels[] = {"Cash",           "Checking",
                                             "Savings",        "Credit Card",
                                             "Physical Asset", "Investment"};
 
-// Layout constants (rows inside box border)
-// row 0: top border
-// row 1: "Add Account:" label
-// row 2: name input field
-// row 3: type selector
-// row 4: card last 4 (only shown for Credit Card type)
-// row 5: message / blank
-// row 6: "Accounts" header (bold)
-// row 7: horizontal rule
-// data starts at row 8
-#define DATA_ROW_START 8
+#define CURSOR_NAME -1
+#define CURSOR_TYPE -2
+#define CURSOR_CARD -3
+#define CURSOR_SUBMIT -4
+#define CURSOR_ADD_BUTTON -5
 
 struct account_list_state {
     sqlite3 *db;
     account_t *accounts;
     int account_count;
-    int cursor; // -1 = name input, -2 = type selector, -3 = card last 4, 0+ =
-                // list items
+    int cursor; // negative = controls, 0+ = list items
     int scroll_offset;
+    bool show_add_form;
     char name_buf[64];
     int name_pos;
     int type_sel;           // index into account_type_labels
@@ -115,8 +109,9 @@ static void reload(account_list_state_t *ls) {
     if (ls->account_count < 0)
         ls->account_count = 0;
 
-    if (ls->cursor > 0 && ls->cursor >= ls->account_count)
-        ls->cursor = ls->account_count > 0 ? ls->account_count - 1 : -1;
+    if (ls->cursor >= 0 && ls->cursor >= ls->account_count)
+        ls->cursor =
+            ls->account_count > 0 ? ls->account_count - 1 : CURSOR_ADD_BUTTON;
 
     ls->dirty = false;
 }
@@ -126,7 +121,7 @@ account_list_state_t *account_list_create(sqlite3 *db) {
     if (!ls)
         return NULL;
     ls->db = db;
-    ls->cursor = -1; // start focused on name input
+    ls->cursor = CURSOR_ADD_BUTTON;
     ls->dirty = true;
     return ls;
 }
@@ -172,95 +167,107 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     if (field_w > 60)
         field_w = 60;
 
-    // -- "Add Account:" label (row 1) --
-    wattron(win, A_BOLD);
-    mvwprintw(win, 1, 2, "Add Account:");
-    wattroff(win, A_BOLD);
+    bool add_button_active = (ls->cursor == CURSOR_ADD_BUTTON && focused);
+    if (add_button_active)
+        wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    mvwprintw(win, 1, 2, "[ Add Account ]");
+    if (add_button_active)
+        wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
 
-    // -- Name input field (row 2) --
-    bool name_active = (ls->cursor == -1 && focused);
-    if (name_active)
-        wattron(win, COLOR_PAIR(COLOR_SELECTED));
+    int message_row = 2;
+    int header_row = 3;
+    int rule_row = 4;
+    int data_row_start = 5;
 
-    mvwprintw(win, 2, 2, "%-*.*s", field_w, field_w, "");
-    mvwprintw(win, 2, 2, "%s", ls->name_buf);
+    if (ls->show_add_form) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, 2, 2, "New Account");
+        wattroff(win, A_BOLD);
 
-    if (name_active) {
-        wattroff(win, COLOR_PAIR(COLOR_SELECTED));
-        curs_set(1);
-        wmove(win, 2, 2 + ls->name_pos);
+        bool name_active = (ls->cursor == CURSOR_NAME && focused);
+        if (name_active)
+            wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        mvwprintw(win, 3, 2, "%-*.*s", field_w, field_w, "");
+        mvwprintw(win, 3, 2, "%s", ls->name_buf);
+        if (name_active) {
+            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+            curs_set(1);
+            wmove(win, 3, 2 + ls->name_pos);
+        } else {
+            curs_set(0);
+        }
+
+        bool type_active = (ls->cursor == CURSOR_TYPE && focused);
+        mvwprintw(win, 4, 2, "Type: ");
+        if (type_active)
+            wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        mvwprintw(win, 4, 8, "< %-16s >", account_type_labels[ls->type_sel]);
+        if (type_active)
+            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+
+        bool card_active = (ls->cursor == CURSOR_CARD && focused);
+        if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
+            mvwprintw(win, 5, 2, "Card last 4: ");
+            if (card_active)
+                wattron(win, COLOR_PAIR(COLOR_SELECTED));
+            mvwprintw(win, 5, 15, "%-4s", ls->card_last4_buf);
+            if (card_active) {
+                wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+                curs_set(1);
+                wmove(win, 5, 15 + ls->card_last4_pos);
+            }
+        } else {
+            mvwprintw(win, 5, 2, "%-*s", field_w + 10, "");
+        }
+
+        bool submit_button_focused = (ls->cursor == CURSOR_SUBMIT && focused);
+        if (submit_button_focused)
+            wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+        mvwprintw(win, 6, 2, "[ Submit ]");
+        if (submit_button_focused)
+            wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+
+        message_row = 7;
+        header_row = 8;
+        rule_row = 9;
+        data_row_start = 10;
     } else {
         curs_set(0);
     }
 
-    // -- Type selector (row 3) --
-    bool type_active = (ls->cursor == -2 && focused);
-    mvwprintw(win, 3, 2, "Type: ");
-    if (type_active)
-        wattron(win, COLOR_PAIR(COLOR_SELECTED));
-    mvwprintw(win, 3, 8, "< %-16s >", account_type_labels[ls->type_sel]);
-    if (type_active)
-        wattroff(win, COLOR_PAIR(COLOR_SELECTED));
-
-    // -- Card last 4 (row 4, credit card only) --
-    bool card_active = (ls->cursor == -3 && focused);
-    if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
-        mvwprintw(win, 4, 2, "Card last 4: ");
-        if (card_active)
-            wattron(win, COLOR_PAIR(COLOR_SELECTED));
-        mvwprintw(win, 4, 15, "%-4s", ls->card_last4_buf);
-        if (card_active) {
-            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
-            curs_set(1);
-            wmove(win, 4, 15 + ls->card_last4_pos);
-        }
-    } else {
-        mvwprintw(win, 4, 2, "%-*s", field_w + 10, ""); // clear row
-    }
-
-    // -- Type selector (row 4) --
-    bool submit_button_focused = (ls->cursor == -4 && focused);
-    if (submit_button_focused)
-        wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-    mvwprintw(win, 5, 2, "[ Submit ]");
-    if (submit_button_focused)
-        wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-
-    // -- Message (row 6) --
     if (ls->message[0] != '\0') {
-        mvwprintw(win, 6, 2, "%s", ls->message);
+        mvwprintw(win, message_row, 2, "%s", ls->message);
     } else {
-        mvwprintw(win, 6, 2, "%-*s", field_w + 10, ""); // clear row
+        mvwprintw(win, message_row, 2, "%-*s", field_w + 10, "");
     }
 
-    // -- "Accounts" header (row 6) --
     wattron(win, A_BOLD);
-    mvwprintw(win, 7, 2, "Accounts");
+    mvwprintw(win, header_row, 2, "Accounts");
     wattroff(win, A_BOLD);
 
-    // -- Horizontal rule (row 7) --
-    wmove(win, 8, 2);
+    wmove(win, rule_row, 2);
     for (int i = 2; i < w - 2; i++)
         waddch(win, ACS_HLINE);
 
     // -- Account list --
-    int visible_rows = h - 1 - DATA_ROW_START;
+    int visible_rows = h - 1 - data_row_start;
     if (visible_rows < 1)
         visible_rows = 1;
 
     if (ls->account_count == 0) {
         const char *msg = "No accounts";
         int mlen = (int)strlen(msg);
-        int row = DATA_ROW_START + visible_rows / 2;
+        int row = data_row_start + visible_rows / 2;
         if (row >= h - 1)
-            row = DATA_ROW_START;
+            row = data_row_start;
         mvwprintw(win, row, (w - mlen) / 2, "%s", msg);
         return;
     }
 
     // Clamp cursor/scroll for list
     if (ls->cursor >= ls->account_count)
-        ls->cursor = ls->account_count - 1;
+        ls->cursor =
+            ls->account_count > 0 ? ls->account_count - 1 : CURSOR_ADD_BUTTON;
 
     if (ls->cursor >= 0) {
         if (ls->cursor < ls->scroll_offset)
@@ -276,7 +283,7 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
         if (idx >= ls->account_count)
             break;
 
-        int row = DATA_ROW_START + i;
+        int row = data_row_start + i;
         bool selected = (idx == ls->cursor);
 
         if (selected) {
@@ -316,10 +323,10 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     }
 }
 
-static void submit_account(account_list_state_t *ls) {
+static bool submit_account(account_list_state_t *ls) {
     if (ls->name_buf[0] == '\0') {
         snprintf(ls->message, sizeof(ls->message), "Name cannot be empty");
-        return;
+        return false;
     }
     const char *card =
         (ls->type_sel == ACCOUNT_CREDIT_CARD) ? ls->card_last4_buf : NULL;
@@ -327,6 +334,7 @@ static void submit_account(account_list_state_t *ls) {
                                    (account_type_t)ls->type_sel, card);
     if (id < 0) {
         snprintf(ls->message, sizeof(ls->message), "Error adding account");
+        return false;
     } else {
         snprintf(ls->message, sizeof(ls->message), "Added: %.56s",
                  ls->name_buf);
@@ -337,16 +345,42 @@ static void submit_account(account_list_state_t *ls) {
         ls->card_last4_pos = 0;
         ls->dirty = true;
         ls->changed = true;
+        return true;
     }
 }
 
 bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch) {
     ls->message[0] = '\0';
 
+    if (!ls->show_add_form && ls->cursor == CURSOR_ADD_BUTTON) {
+        switch (ch) {
+        case '\n':
+            ls->show_add_form = true;
+            ls->cursor = CURSOR_NAME;
+            return true;
+        case KEY_DOWN:
+        case 'j':
+            if (ls->account_count > 0)
+                ls->cursor = 0;
+            return true;
+        default:
+            return false;
+        }
+    }
+
     // Name input field is focused
-    if (ls->cursor == -1) {
+    if (ls->show_add_form && ls->cursor == CURSOR_NAME) {
+        if (ch == 27) {
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
+        }
+        if (ch == KEY_UP || ch == 'k') {
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
+        }
         if (ch == KEY_DOWN || ch == '\n') {
-            ls->cursor = -2; // move to type selector
+            ls->cursor = CURSOR_TYPE; // move to type selector
             return true;
         }
         // Text input
@@ -356,20 +390,24 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
     }
 
     // Type selector is focused
-    if (ls->cursor == -2) {
+    if (ls->show_add_form && ls->cursor == CURSOR_TYPE) {
         switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
         case KEY_UP:
         case 'k':
-            ls->cursor = -1; // back to name input
+            ls->cursor = CURSOR_NAME; // back to name input
             return true;
         case KEY_DOWN:
         case 'j':
         case '\n':
             if (ls->type_sel == ACCOUNT_CREDIT_CARD) {
-                ls->cursor = -3; // go to card last 4
+                ls->cursor = CURSOR_CARD; // go to card last 4
             } else {
                 // Go to submit button
-                ls->cursor = -4;
+                ls->cursor = CURSOR_SUBMIT;
             }
             return true;
         case KEY_LEFT:
@@ -387,16 +425,20 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
     }
 
     // Card last 4 input is focused
-    if (ls->cursor == -3) {
+    if (ls->show_add_form && ls->cursor == CURSOR_CARD) {
         switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
         case KEY_UP:
         case 'k':
-            ls->cursor = -2; // back to type selector
+            ls->cursor = CURSOR_TYPE; // back to type selector
             return true;
         case KEY_DOWN:
         case 'j':
         case '\n':
-            ls->type_sel = (ls->type_sel + 1) % ACCOUNT_TYPE_COUNT;
+            ls->cursor = CURSOR_SUBMIT;
             return true;
         default: {
             // Digits only, max 4
@@ -427,11 +469,16 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
     }
 
     // Submit button is focused
-    if (ls->cursor == -4) {
+    if (ls->show_add_form && ls->cursor == CURSOR_SUBMIT) {
         switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
         case KEY_UP:
         case 'k':
-            ls->cursor = -2; // back to type selector
+            ls->cursor =
+                (ls->type_sel == ACCOUNT_CREDIT_CARD) ? CURSOR_CARD : CURSOR_TYPE;
             return true;
         case KEY_DOWN:
         case 'j':
@@ -441,7 +488,10 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
             }
             return true;
         case '\n':
-            submit_account(ls);
+            if (submit_account(ls)) {
+                ls->show_add_form = false;
+                ls->cursor = CURSOR_ADD_BUTTON;
+            }
             return true;
         }
     }
@@ -498,7 +548,7 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
         if (ls->cursor > 0) {
             ls->cursor--;
         } else {
-            ls->cursor = -4; // go to [ Submit ] button
+            ls->cursor = CURSOR_ADD_BUTTON;
         }
         return true;
     case KEY_DOWN:
@@ -508,11 +558,12 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
         return true;
     case KEY_HOME:
     case 'g':
-        ls->cursor = -1; // go to name input
+        ls->cursor = CURSOR_ADD_BUTTON;
         return true;
     case KEY_END:
     case 'G':
-        ls->cursor = ls->account_count > 0 ? ls->account_count - 1 : 0;
+        ls->cursor =
+            ls->account_count > 0 ? ls->account_count - 1 : CURSOR_ADD_BUTTON;
         return true;
     default:
         return false;
@@ -520,13 +571,16 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
 }
 
 const char *account_list_status_hint(const account_list_state_t *ls) {
-    if (ls->cursor == -1)
-        return "q:Quit  Enter:Add  \u2193:Type  \u2190:Sidebar";
-    if (ls->cursor == -2)
-        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:Next  "
-               "\u2190:Sidebar";
-    if (ls->cursor == -3)
-        return "q:Quit  Enter:Add  \u2191:Type  \u2193:List  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_ADD_BUTTON)
+        return "q:Quit  Enter:Show Add Form  \u2193:List  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_NAME)
+        return "q:Quit  Enter:Next  Esc:Close Form  \u2193:Type  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_TYPE)
+        return "q:Quit  \u2190\u2192:Change Type  \u2191:Name  \u2193:Next  Esc:Close Form";
+    if (ls->cursor == CURSOR_CARD)
+        return "q:Quit  Enter:Next  \u2191:Type  Esc:Close Form  \u2190:Sidebar";
+    if (ls->cursor == CURSOR_SUBMIT)
+        return "q:Quit  Enter:Submit  \u2191:Back  \u2193:List  Esc:Close Form";
     return "q:Quit  \u2191\u2193:Navigate  e:Edit  d:Delete  \u2190:Sidebar";
 }
 
