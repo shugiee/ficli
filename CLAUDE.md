@@ -92,7 +92,8 @@ make clean    # clean build artifacts
 - [x] Allow toggling light/dark mode via `t` shortcut
 - [x] Show new account in Transactions view
 - [x] Allow editing/deleting accounts
-- [ ] Show summary information in header
+- [x] Show summary information in header
+- [ ] Allow bulk editing transactions (e.g., for categorization)
 - [ ] Summary/report views
 - [ ] Show chart of account balance over time
 - [ ] Allow "reflection date" for transactions to let user control where they're bucketed for reports and budgets

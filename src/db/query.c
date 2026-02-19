@@ -211,6 +211,162 @@ int db_count_transactions_for_account(sqlite3 *db, int64_t account_id) {
     return count;
 }
 
+int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
+                                 int64_t *out_cents) {
+    if (!out_cents)
+        return -1;
+    *out_cents = 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(CASE"
+        "  WHEN type = 'INCOME' THEN amount_cents"
+        "  WHEN type = 'EXPENSE' THEN -amount_cents"
+        "  WHEN type = 'TRANSFER' THEN CASE"
+        "    WHEN transfer_id IS NOT NULL AND id = transfer_id THEN -amount_cents"
+        "    ELSE amount_cents"
+        "  END"
+        "  ELSE 0"
+        " END), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_balance_cents prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_balance_cents step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    *out_cents = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_get_account_month_net_cents(sqlite3 *db, int64_t account_id,
+                                   int64_t *out_cents) {
+    if (!out_cents)
+        return -1;
+    *out_cents = 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(CASE"
+        "  WHEN type = 'INCOME' THEN amount_cents"
+        "  WHEN type = 'EXPENSE' THEN -amount_cents"
+        "  WHEN type = 'TRANSFER' THEN CASE"
+        "    WHEN transfer_id IS NOT NULL AND id = transfer_id THEN -amount_cents"
+        "    ELSE amount_cents"
+        "  END"
+        "  ELSE 0"
+        " END), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?"
+        "   AND date >= date('now', 'localtime', 'start of month')"
+        "   AND date <= date('now', 'localtime')",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_month_net_cents prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_month_net_cents step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    *out_cents = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_get_account_month_income_cents(sqlite3 *db, int64_t account_id,
+                                      int64_t *out_cents) {
+    if (!out_cents)
+        return -1;
+    *out_cents = 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(amount_cents), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?"
+        "   AND type = 'INCOME'"
+        "   AND date >= date('now', 'localtime', 'start of month')"
+        "   AND date <= date('now', 'localtime')",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_month_income_cents prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_month_income_cents step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    *out_cents = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_get_account_month_expense_cents(sqlite3 *db, int64_t account_id,
+                                       int64_t *out_cents) {
+    if (!out_cents)
+        return -1;
+    *out_cents = 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(amount_cents), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?"
+        "   AND type = 'EXPENSE'"
+        "   AND date >= date('now', 'localtime', 'start of month')"
+        "   AND date <= date('now', 'localtime')",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_month_expense_cents prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_month_expense_cents step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    *out_cents = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
 int db_delete_account(sqlite3 *db, int64_t account_id, bool delete_transactions) {
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM accounts WHERE id = ?", -1,

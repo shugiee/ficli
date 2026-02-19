@@ -53,6 +53,16 @@ int db_delete_transaction(sqlite3 *db, int txn_id);
 // Count transactions for an account. Returns count, -1 on error.
 int db_count_transactions_for_account(sqlite3 *db, int64_t account_id);
 
+// Account-level summary helpers. Returns 0 on success, -1 on error.
+int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
+                                 int64_t *out_cents);
+int db_get_account_month_net_cents(sqlite3 *db, int64_t account_id,
+                                   int64_t *out_cents);
+int db_get_account_month_income_cents(sqlite3 *db, int64_t account_id,
+                                      int64_t *out_cents);
+int db_get_account_month_expense_cents(sqlite3 *db, int64_t account_id,
+                                       int64_t *out_cents);
+
 // Delete account. If delete_transactions is true, related transactions are
 // deleted first. Returns 0 success, -3 has related transactions, -2 not found,
 // -1 error.

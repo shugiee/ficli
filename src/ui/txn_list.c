@@ -20,11 +20,20 @@
 // Layout constants: rows consumed above data rows (inside box border)
 // row 0: top border
 // row 1: account tabs
-// row 2: filter bar (shown when active or has text)
-// row 3: column headers
-// row 4: horizontal rule
-// data starts at row 5
-#define DATA_ROW_START 5
+// row 2: spacer
+// row 3: spacer
+// row 4: summary line
+// row 5: spacer
+// row 6: spacer
+// row 7: filter bar (shown when active or has text)
+// row 8: column headers
+// row 9: horizontal rule
+// data starts at row 10
+#define SUMMARY_ROW 4
+#define FILTER_ROW 7
+#define HEADER_ROW 8
+#define RULE_ROW 9
+#define DATA_ROW_START 10
 
 typedef enum {
     SORT_DATE,
@@ -57,6 +66,11 @@ struct txn_list_state {
     // Derived display (sorted + filtered copy of transactions)
     txn_row_t *display;
     int display_count;
+
+    int64_t balance_cents;
+    int64_t month_net_cents;
+    int64_t month_income_cents;
+    int64_t month_expense_cents;
 
     int cursor;
     int scroll_offset;
@@ -136,6 +150,33 @@ static void format_amount(int64_t cents, transaction_type_t type, char *buf,
 
     if (type == TRANSACTION_EXPENSE)
         snprintf(buf, buflen, "-%s.%02ld", formatted, (long)frac);
+    else
+        snprintf(buf, buflen, "%s.%02ld", formatted, (long)frac);
+}
+
+static void format_signed_cents(int64_t cents, bool show_plus, char *buf,
+                                int buflen) {
+    int64_t abs_cents = cents < 0 ? -cents : cents;
+    int64_t whole = abs_cents / 100;
+    int64_t frac = abs_cents % 100;
+
+    char raw[32];
+    snprintf(raw, sizeof(raw), "%ld", (long)whole);
+    int rawlen = (int)strlen(raw);
+
+    char formatted[48];
+    int fi = 0;
+    for (int i = 0; i < rawlen; i++) {
+        if (i > 0 && (rawlen - i) % 3 == 0)
+            formatted[fi++] = ',';
+        formatted[fi++] = raw[i];
+    }
+    formatted[fi] = '\0';
+
+    if (cents < 0)
+        snprintf(buf, buflen, "-%s.%02ld", formatted, (long)frac);
+    else if (show_plus)
+        snprintf(buf, buflen, "+%s.%02ld", formatted, (long)frac);
     else
         snprintf(buf, buflen, "%s.%02ld", formatted, (long)frac);
 }
@@ -296,6 +337,24 @@ static void reload(txn_list_state_t *ls) {
         ls->txn_count = db_get_transactions(ls->db, acct_id, &ls->transactions);
         if (ls->txn_count < 0)
             ls->txn_count = 0;
+
+        if (db_get_account_balance_cents(ls->db, acct_id, &ls->balance_cents) <
+            0)
+            ls->balance_cents = 0;
+        if (db_get_account_month_net_cents(ls->db, acct_id,
+                                           &ls->month_net_cents) < 0)
+            ls->month_net_cents = 0;
+        if (db_get_account_month_income_cents(ls->db, acct_id,
+                                              &ls->month_income_cents) < 0)
+            ls->month_income_cents = 0;
+        if (db_get_account_month_expense_cents(ls->db, acct_id,
+                                               &ls->month_expense_cents) < 0)
+            ls->month_expense_cents = 0;
+    } else {
+        ls->balance_cents = 0;
+        ls->month_net_cents = 0;
+        ls->month_income_cents = 0;
+        ls->month_expense_cents = 0;
     }
 
     ls->dirty = false;
@@ -349,16 +408,111 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         col += len + 2;
     }
 
-    // -- Filter bar (row 2): shown when active or text is present --
+    // -- Summary line (centered, row 4) --
+    char balance_buf[24];
+    char month_net_buf[24];
+    char month_income_buf[24];
+    char month_expense_buf[24];
+    format_signed_cents(ls->balance_cents, false, balance_buf,
+                        sizeof(balance_buf));
+    format_signed_cents(ls->month_net_cents, true, month_net_buf,
+                        sizeof(month_net_buf));
+    format_signed_cents(ls->month_income_cents, false, month_income_buf,
+                        sizeof(month_income_buf));
+    format_signed_cents(-ls->month_expense_cents, false, month_expense_buf,
+                        sizeof(month_expense_buf));
+
+    char summary_text[256];
+    int summary_len = snprintf(
+        summary_text, sizeof(summary_text),
+        "Balance %s   MTD net %s   MTD income %s   MTD expenses %s",
+        balance_buf, month_net_buf, month_income_buf, month_expense_buf);
+    if (summary_len < 0)
+        summary_len = 0;
+
+    if (summary_len > w - 4) {
+        summary_len =
+            snprintf(summary_text, sizeof(summary_text),
+                     "Balance %s   MTD net %s   MTD income %s", balance_buf,
+                     month_net_buf, month_income_buf);
+    }
+    if (summary_len > w - 4) {
+        summary_len = snprintf(summary_text, sizeof(summary_text),
+                               "Balance %s   MTD net %s", balance_buf,
+                               month_net_buf);
+    }
+    if (summary_len > w - 4) {
+        summary_len =
+            snprintf(summary_text, sizeof(summary_text), "Balance %s", balance_buf);
+    }
+    if (summary_len < 0)
+        summary_len = 0;
+
+    int summary_col = (w - summary_len) / 2;
+    if (summary_col < 2)
+        summary_col = 2;
+
+    int summary_col_cur = summary_col;
+    wattron(win, A_BOLD);
+    mvwprintw(win, SUMMARY_ROW, summary_col_cur, "Balance ");
+    wattroff(win, A_BOLD);
+    summary_col_cur += 8;
+    int balance_color = (ls->balance_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
+    wattron(win, COLOR_PAIR(balance_color));
+    mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", balance_buf);
+    wattroff(win, COLOR_PAIR(balance_color));
+    summary_col_cur += (int)strlen(balance_buf);
+
+    if (strstr(summary_text, "MTD net")) {
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
+        summary_col_cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD net ");
+        wattroff(win, A_BOLD);
+        summary_col_cur += 8;
+        int month_color =
+            (ls->month_net_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
+        wattron(win, COLOR_PAIR(month_color));
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_net_buf);
+        wattroff(win, COLOR_PAIR(month_color));
+        summary_col_cur += (int)strlen(month_net_buf);
+    }
+
+    if (strstr(summary_text, "MTD income")) {
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
+        summary_col_cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD income ");
+        wattroff(win, A_BOLD);
+        summary_col_cur += 11;
+        wattron(win, COLOR_PAIR(COLOR_INCOME));
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_income_buf);
+        wattroff(win, COLOR_PAIR(COLOR_INCOME));
+        summary_col_cur += (int)strlen(month_income_buf);
+    }
+
+    if (strstr(summary_text, "MTD expenses")) {
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
+        summary_col_cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD expenses ");
+        wattroff(win, A_BOLD);
+        summary_col_cur += 13;
+        wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+        mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_expense_buf);
+        wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+    }
+
+    // -- Filter bar (row 7): shown when active or text is present --
     if (ls->filter_active || ls->filter_len > 0) {
         if (ls->filter_active)
             wattron(win, A_BOLD);
-        mvwprintw(win, 2, 2, "Filter: %s", ls->filter_buf);
+        mvwprintw(win, FILTER_ROW, 2, "Filter: %s", ls->filter_buf);
         if (ls->filter_active)
             wattroff(win, A_BOLD);
     }
 
-    // -- Column headers (row 3) with sort direction indicator --
+    // -- Column headers (row 8) with sort direction indicator --
     // Column layout: Date(12) gap(3) Type(8) gap(3) Category(20) gap(3)
     // Amount(13) gap(3) Payee(30) gap(3) Desc(rest)
     int desc_w = w - 2 - DATE_COL_WIDTH - GAP_WIDTH - TYPE_COL_WIDTH -
@@ -372,38 +526,38 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     // right after the active label text.
     const char *ind_str = ls->sort_asc ? "\u2191" : "\u2193";
     wattron(win, A_BOLD);
-    mvwprintw(win, 3, 2, "%-*s", DATE_COL_WIDTH, "Date");
-    mvwprintw(win, 3, 17, "%-*s", TYPE_COL_WIDTH, "Type");
-    mvwprintw(win, 3, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
-    mvwprintw(win, 3, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
-    mvwprintw(win, 3, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
-    mvwprintw(win, 3, 100, "%-*s", desc_w, "Description");
+    mvwprintw(win, HEADER_ROW, 2, "%-*s", DATE_COL_WIDTH, "Date");
+    mvwprintw(win, HEADER_ROW, 17, "%-*s", TYPE_COL_WIDTH, "Type");
+    mvwprintw(win, HEADER_ROW, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
+    mvwprintw(win, HEADER_ROW, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
+    mvwprintw(win, HEADER_ROW, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
+    mvwprintw(win, HEADER_ROW, 100, "%-*s", desc_w, "Description");
     switch (ls->sort_col) {
     case SORT_DATE:
-        mvwprintw(win, 3, 7, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 7, "%s", ind_str);
         break;
     case SORT_TYPE:
-        mvwprintw(win, 3, 22, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 22, "%s", ind_str);
         break;
     case SORT_CATEGORY:
-        mvwprintw(win, 3, 37, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 37, "%s", ind_str);
         break;
     case SORT_AMOUNT:
-        mvwprintw(win, 3, 54, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 54, "%s", ind_str);
         break;
     case SORT_PAYEE:
-        mvwprintw(win, 3, 69, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 69, "%s", ind_str);
         break;
     case SORT_DESCRIPTION:
-        mvwprintw(win, 3, 108, "%s", ind_str);
+        mvwprintw(win, HEADER_ROW, 108, "%s", ind_str);
         break;
     default:
         break;
     }
     wattroff(win, A_BOLD);
 
-    // -- Horizontal rule (row 4) --
-    wmove(win, 4, 2);
+    // -- Horizontal rule (row 9) --
+    wmove(win, RULE_ROW, 2);
     for (int i = 2; i < w - 2; i++)
         waddch(win, ACS_HLINE);
 
@@ -421,7 +575,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
             row = DATA_ROW_START;
         mvwprintw(win, row, (w - mlen) / 2, "%s", msg);
         if (ls->filter_active)
-            wmove(win, 2, 2 + 8 + ls->filter_len);
+            wmove(win, FILTER_ROW, 2 + 8 + ls->filter_len);
         return;
     }
 
@@ -505,7 +659,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 
     // Place terminal cursor in filter bar when active
     if (ls->filter_active)
-        wmove(win, 2, 2 + 8 + ls->filter_len);
+        wmove(win, FILTER_ROW, 2 + 8 + ls->filter_len);
 }
 
 bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
