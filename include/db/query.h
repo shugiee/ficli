@@ -26,11 +26,26 @@ int db_get_categories(sqlite3 *db, category_type_t type, category_t **out);
 // Insert a transaction. Returns new row id, -1 on error.
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn);
 
+// Insert a transfer pair (from txn.account_id to to_account_id). Returns the
+// source transaction id on success, -2 for invalid accounts, -1 on error.
+int64_t db_insert_transfer(sqlite3 *db, const transaction_t *txn,
+                           int64_t to_account_id);
+
 // Fetch a full transaction by id. Returns 0 success, -2 not found, -1 error.
 int db_get_transaction_by_id(sqlite3 *db, int txn_id, transaction_t *out);
 
 // Update a transaction. Returns 0 success, -2 not found, -1 error.
 int db_update_transaction(sqlite3 *db, const transaction_t *txn);
+
+// Update or create a transfer pair for an existing source transaction id.
+// Returns 0 success, -2 not found, -3 invalid accounts, -1 error.
+int db_update_transfer(sqlite3 *db, const transaction_t *txn,
+                       int64_t to_account_id);
+
+// Get the paired transfer account id for txn_id. Returns 0 success, -2 if no
+// linked pair, -1 on error.
+int db_get_transfer_counterparty_account(sqlite3 *db, int64_t txn_id,
+                                         int64_t *out_account_id);
 
 // Delete a transaction (and transfer pair if present). Returns 0 success, -2 not found, -1 error.
 int db_delete_transaction(sqlite3 *db, int txn_id);
