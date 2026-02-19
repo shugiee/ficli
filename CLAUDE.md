@@ -88,8 +88,8 @@ make clean    # clean build artifacts
 - [x] Make `s` for sort select columns in the correct order
 - [x] Add a Payee field to transactions
 - [x] Prevent duplicate transactions when importing CSVs
+- [x] Add "Submit" button when adding an account
 - [ ] Allow toggling light/dark mode
-- [ ] Add "Submit" button when adding an account
 - [ ] Show new account in Transactions view
 - [ ] Show summary information in header
 - [ ] Summary/report views
