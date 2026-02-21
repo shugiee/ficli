@@ -215,6 +215,19 @@ static void handle_text_input(char *buf, int *pos, int maxlen, int ch) {
     }
 }
 
+static void draw_box(WINDOW *win, int top, int left, int bottom, int right) {
+    if (!win || top >= bottom || left >= right)
+        return;
+    mvwhline(win, top, left + 1, ACS_HLINE, right - left - 1);
+    mvwhline(win, bottom, left + 1, ACS_HLINE, right - left - 1);
+    mvwvline(win, top + 1, left, ACS_VLINE, bottom - top - 1);
+    mvwvline(win, top + 1, right, ACS_VLINE, bottom - top - 1);
+    mvwaddch(win, top, left, ACS_ULCORNER);
+    mvwaddch(win, top, right, ACS_URCORNER);
+    mvwaddch(win, bottom, left, ACS_LLCORNER);
+    mvwaddch(win, bottom, right, ACS_LRCORNER);
+}
+
 void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
     if (ls->dirty)
         reload(ls);
@@ -228,12 +241,14 @@ void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
     if (field_w > 60)
         field_w = 60;
 
-    bool add_button_active = (ls->cursor == CURSOR_ADD_BUTTON && focused);
-    if (add_button_active)
-        wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-    mvwprintw(win, 1, 2, "[ Add Category ]");
-    if (add_button_active)
-        wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    if (!ls->show_add_form) {
+        bool add_button_active = (ls->cursor == CURSOR_ADD_BUTTON && focused);
+        if (add_button_active)
+            wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+        mvwprintw(win, 1, 2, "[ Add Category ]");
+        if (add_button_active)
+            wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+    }
 
     int message_row = 2;
     int header_row = 3;
@@ -241,42 +256,92 @@ void category_list_draw(category_list_state_t *ls, WINDOW *win, bool focused) {
     int data_row_start = 5;
 
     if (ls->show_add_form) {
+        int form_top = 2;
+        int form_left_col = (w >= 56) ? 4 : 2;
+        int form_right_col = w - 3;
+        if (form_right_col - form_left_col + 1 > 56)
+            form_right_col = form_left_col + 55;
+        if (form_right_col > w - 2)
+            form_right_col = w - 2;
+        if (form_right_col - form_left_col + 1 < 24) {
+            form_left_col = 2;
+            form_right_col = w - 2;
+        }
+
+        int form_label_col = form_left_col + 2;
+        int form_field_col = form_label_col + 13;
+        if (form_field_col > form_right_col - 9)
+            form_field_col = form_right_col - 9;
+        if (form_field_col < form_label_col + 7)
+            form_field_col = form_label_col + 7;
+        int form_field_w = form_right_col - form_field_col - 1;
+        if (form_field_w < 1)
+            form_field_w = 1;
+        if (form_field_w > 36)
+            form_field_w = 36;
+
+        int name_row = form_top + 1;
+        int type_row = name_row + 1;
+        int submit_row = type_row + 2;
+        int form_bottom = submit_row;
+
+        draw_box(win, form_top, form_left_col, form_bottom, form_right_col);
+
         wattron(win, A_BOLD);
-        mvwprintw(win, 2, 2, "New Category");
+        mvwprintw(win, form_top, form_left_col + 2, " Add Category ");
         wattroff(win, A_BOLD);
 
         bool name_active = (ls->cursor == CURSOR_NAME && focused);
         if (name_active)
-            wattron(win, COLOR_PAIR(COLOR_SELECTED));
-        mvwprintw(win, 3, 2, "%-*.*s", field_w, field_w, "");
-        mvwprintw(win, 3, 2, "%s", ls->name_buf);
+            wattron(win, COLOR_PAIR(COLOR_INFO) | A_BOLD);
+        mvwprintw(win, name_row, form_label_col, "Name:");
+        if (name_active)
+            wattroff(win, COLOR_PAIR(COLOR_INFO) | A_BOLD);
+        int name_field_color =
+            COLOR_PAIR(name_active ? COLOR_FORM_ACTIVE : COLOR_FORM_DROPDOWN);
+        wattron(win, name_field_color);
+        mvwprintw(win, name_row, form_field_col, "%-*s", form_field_w, "");
+        mvwprintw(win, name_row, form_field_col, "%.*s", form_field_w, ls->name_buf);
+        wattroff(win, name_field_color);
         if (name_active) {
-            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
             curs_set(1);
-            wmove(win, 3, 2 + ls->name_pos);
+            int name_cursor_col = form_field_col + ls->name_pos;
+            if (name_cursor_col > form_field_col + form_field_w - 1)
+                name_cursor_col = form_field_col + form_field_w - 1;
+            wmove(win, name_row, name_cursor_col);
         } else {
             curs_set(0);
         }
 
         bool type_active = (ls->cursor == CURSOR_TYPE && focused);
-        mvwprintw(win, 4, 2, "Type: ");
         if (type_active)
-            wattron(win, COLOR_PAIR(COLOR_SELECTED));
-        mvwprintw(win, 4, 8, "< %-8s >", category_type_labels[ls->type_sel]);
+            wattron(win, COLOR_PAIR(COLOR_INFO) | A_BOLD);
+        mvwprintw(win, type_row, form_label_col, "Type:");
         if (type_active)
-            wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+            wattroff(win, COLOR_PAIR(COLOR_INFO) | A_BOLD);
+        int type_field_color =
+            COLOR_PAIR(type_active ? COLOR_FORM_ACTIVE : COLOR_FORM_DROPDOWN);
+        wattron(win, type_field_color);
+        mvwprintw(win, type_row, form_field_col, "%-*s", form_field_w, "");
+        mvwprintw(win, type_row, form_field_col, "< %-8s >",
+                  category_type_labels[ls->type_sel]);
+        wattroff(win, type_field_color);
 
         bool submit_active = (ls->cursor == CURSOR_SUBMIT && focused);
+        const char *submit_label = "[ Submit ]";
+        int submit_col = form_right_col - (int)strlen(submit_label) - 2;
+        if (submit_col < form_left_col + 2)
+            submit_col = form_left_col + 2;
         if (submit_active)
             wattron(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
-        mvwprintw(win, 6, 2, "[ Submit ]");
+        mvwprintw(win, submit_row, submit_col, "%s", submit_label);
         if (submit_active)
             wattroff(win, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
 
-        message_row = 7;
-        header_row = 8;
-        rule_row = 9;
-        data_row_start = 10;
+        message_row = form_bottom + 1;
+        header_row = message_row + 1;
+        rule_row = header_row + 1;
+        data_row_start = rule_row + 1;
     } else {
         curs_set(0);
     }
@@ -444,7 +509,6 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
             return true;
         }
         if (ch == KEY_UP || ch == 'k') {
-            ls->cursor = CURSOR_ADD_BUTTON;
             return true;
         }
         if (ch == KEY_DOWN || ch == '\n') {
@@ -578,7 +642,7 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         if (ls->cursor > 0) {
             ls->cursor--;
         } else {
-            ls->cursor = CURSOR_ADD_BUTTON;
+            ls->cursor = ls->show_add_form ? CURSOR_SUBMIT : CURSOR_ADD_BUTTON;
         }
         return true;
     case KEY_DOWN:
@@ -588,7 +652,7 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
         return true;
     case KEY_HOME:
     case 'g':
-        ls->cursor = CURSOR_ADD_BUTTON;
+        ls->cursor = ls->show_add_form ? CURSOR_NAME : CURSOR_ADD_BUTTON;
         return true;
     case KEY_END:
     case 'G':
