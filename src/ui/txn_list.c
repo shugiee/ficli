@@ -14,6 +14,10 @@
 #define CATEGORY_COL_WIDTH 20
 #define AMOUNT_COL_WIDTH 13
 #define PAYEE_COL_WIDTH 30
+#define BALANCE_CHART_LOOKBACK_DAYS 90
+#define CHART_PLOT_HEIGHT 6
+#define CHART_MIN_WIDTH 56
+#define CHART_SCALE_CAP_CENTS 100000
 // Description column takes remaining width, but enforce a minimum for usability
 #define DESC_COL_MIN_WIDTH 4
 
@@ -25,15 +29,13 @@
 // row 4: summary line
 // row 5: spacer
 // row 6: spacer
-// row 7: filter bar (shown when active or has text)
-// row 8: column headers
-// row 9: horizontal rule
-// data starts at row 10
+// row 7+: optional chart block
+// filter, headers, rule, and data start rows are computed per-window
 #define SUMMARY_ROW 4
-#define FILTER_ROW 7
-#define HEADER_ROW 8
-#define RULE_ROW 9
-#define DATA_ROW_START 10
+#define BASE_FILTER_ROW 7
+#define BASE_HEADER_ROW 8
+#define BASE_RULE_ROW 9
+#define BASE_DATA_ROW_START 10
 
 typedef enum {
     SORT_DATE,
@@ -72,6 +74,8 @@ struct txn_list_state {
     int display_count;
 
     int64_t balance_cents;
+    balance_point_t *balance_series;
+    int balance_series_count;
     int64_t month_net_cents;
     int64_t month_income_cents;
     int64_t month_expense_cents;
@@ -306,6 +310,18 @@ static void format_signed_cents(int64_t cents, bool show_plus, char *buf,
         snprintf(buf, buflen, "%s.%02ld", formatted, (long)frac);
 }
 
+static void format_axis_date_short(const char *iso, char *buf, int buflen) {
+    static const char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    int y = 0, m = 0, d = 0;
+    if (!iso || sscanf(iso, "%4d-%2d-%2d", &y, &m, &d) != 3 || m < 1 ||
+        m > 12 || d < 1 || d > 31) {
+        snprintf(buf, buflen, "%s", iso ? iso : "");
+        return;
+    }
+    snprintf(buf, buflen, "%s %d", months[m - 1], d);
+}
+
 // Case-insensitive substring search (avoids _GNU_SOURCE dependency on
 // strcasestr)
 static bool contains_icase(const char *haystack, const char *needle) {
@@ -406,17 +422,215 @@ static int compare_txn(const void *a, const void *b) {
     return ls->sort_asc ? cmp : -cmp;
 }
 
+typedef struct {
+    bool show_chart;
+    bool chart_hidden_small;
+    int chart_title_row;
+    int chart_plot_row_start;
+    int chart_axis_row;
+    int filter_row;
+    int header_row;
+    int rule_row;
+    int data_row_start;
+} txn_layout_t;
+
+static txn_layout_t txn_list_layout_for_window(int h, int w) {
+    txn_layout_t layout = {
+        .show_chart = false,
+        .chart_hidden_small = false,
+        .chart_title_row = 6,
+        .chart_plot_row_start = 7,
+        .chart_axis_row = 7 + CHART_PLOT_HEIGHT,
+        .filter_row = BASE_FILTER_ROW,
+        .header_row = BASE_HEADER_ROW,
+        .rule_row = BASE_RULE_ROW,
+        .data_row_start = BASE_DATA_ROW_START,
+    };
+
+    int chart_row_offset = CHART_PLOT_HEIGHT + 2;
+    int chart_data_start = BASE_DATA_ROW_START + chart_row_offset;
+    bool enough_width = (w >= CHART_MIN_WIDTH);
+    bool enough_height = (h - 1 - chart_data_start >= 1);
+
+    layout.chart_hidden_small = !enough_width || !enough_height;
+    if (!layout.chart_hidden_small) {
+        layout.show_chart = true;
+        layout.filter_row = BASE_FILTER_ROW + chart_row_offset;
+        layout.header_row = BASE_HEADER_ROW + chart_row_offset;
+        layout.rule_row = BASE_RULE_ROW + chart_row_offset;
+        layout.data_row_start = chart_data_start;
+    }
+
+    return layout;
+}
+
 static int txn_list_visible_rows(WINDOW *win) {
     if (!win)
         return 20;
     int h = 0;
     int w = 0;
     getmaxyx(win, h, w);
-    (void)w;
-    int visible_rows = h - 1 - DATA_ROW_START;
+    txn_layout_t layout = txn_list_layout_for_window(h, w);
+    int visible_rows = h - 1 - layout.data_row_start;
     if (visible_rows < 1)
         visible_rows = 1;
     return visible_rows;
+}
+
+static void draw_balance_chart(txn_list_state_t *ls, WINDOW *win, int w,
+                               const txn_layout_t *layout) {
+    if (!ls || !win || !layout || !layout->show_chart)
+        return;
+    if (ls->balance_series_count <= 0 || !ls->balance_series)
+        return;
+
+    int64_t min_c = ls->balance_series[0].balance_cents;
+    int64_t max_c = ls->balance_series[0].balance_cents;
+    for (int i = 1; i < ls->balance_series_count; i++) {
+        int64_t v = ls->balance_series[i].balance_cents;
+        if (v < min_c)
+            min_c = v;
+        if (v > max_c)
+            max_c = v;
+    }
+
+    int64_t abs_min = (min_c < 0) ? -min_c : min_c;
+    int64_t abs_max = (max_c < 0) ? -max_c : max_c;
+    int64_t scale_abs = abs_min > abs_max ? abs_min : abs_max;
+    if (scale_abs > CHART_SCALE_CAP_CENTS)
+        scale_abs = CHART_SCALE_CAP_CENTS;
+    if (scale_abs < 1)
+        scale_abs = 1;
+
+    int plot_w = w - 4;
+    if (plot_w < 1)
+        return;
+
+    int plot_top = layout->chart_plot_row_start;
+    int plot_bottom = plot_top + CHART_PLOT_HEIGHT - 1;
+    if (plot_bottom < plot_top)
+        return;
+
+    int64_t plot_min = min_c;
+    int64_t plot_max = max_c;
+    if (plot_min < -scale_abs)
+        plot_min = -scale_abs;
+    if (plot_max > scale_abs)
+        plot_max = scale_abs;
+
+    int64_t span = plot_max - plot_min;
+    int baseline_y = plot_bottom;
+    if (plot_max <= 0) {
+        baseline_y = plot_top;
+    } else if (plot_min >= 0) {
+        baseline_y = plot_bottom;
+    } else {
+        baseline_y = plot_top +
+                     (int)((plot_max * (CHART_PLOT_HEIGHT - 1) + span / 2) / span);
+    }
+    if (baseline_y < plot_top)
+        baseline_y = plot_top;
+    if (baseline_y > plot_bottom)
+        baseline_y = plot_bottom;
+
+    wattron(win, A_DIM);
+    mvwhline(win, baseline_y, 2, ACS_HLINE, plot_w);
+    wattroff(win, A_DIM);
+
+    int rows_up = baseline_y - plot_top;
+    int rows_down = plot_bottom - baseline_y;
+    int64_t pos_max = (plot_max > 0) ? plot_max : 0;
+    int64_t neg_abs_max = (plot_min < 0) ? -plot_min : 0;
+
+    // Braille-column partials (4 levels per row) for a thinner btop-like look.
+    // Up bars fill from bottom upward; down bars fill from top downward.
+    static const char *up_level[5] = {" ", "⡀", "⡄", "⡆", "⡇"};
+    static const char *down_level[5] = {" ", "⠁", "⠃", "⠇", "⡇"};
+
+    int pair_width = 2; // Render each sampled point as two adjacent bars.
+    int bar_count = (plot_w + pair_width - 1) / pair_width;
+    if (bar_count < 1)
+        bar_count = 1;
+
+    for (int b = 0; b < bar_count; b++) {
+        int col = 2 + b * pair_width;
+        if (col >= w - 1)
+            break;
+
+        int idx = 0;
+        if (bar_count > 1 && ls->balance_series_count > 1) {
+            idx = (b * (ls->balance_series_count - 1)) / (bar_count - 1);
+        }
+        int64_t v = ls->balance_series[idx].balance_cents;
+        if (v > scale_abs)
+            v = scale_abs;
+        if (v < -scale_abs)
+            v = -scale_abs;
+
+        if (v >= 0 && rows_up > 0 && pos_max > 0) {
+            int units_per_row = 4;
+            int units_total = rows_up * units_per_row;
+            long double scaled =
+                ((long double)v * (long double)units_total) /
+                (long double)pos_max;
+            int64_t units = (int64_t)(scaled + 0.5L);
+            if (units < 1 && v > 0)
+                units = 1;
+            wattron(win, COLOR_PAIR(COLOR_INCOME));
+            for (int r = 0; r < rows_up; r++) {
+                int64_t remain = units - (int64_t)r * units_per_row;
+                if (remain <= 0)
+                    break;
+                int level = (remain >= units_per_row) ? units_per_row : (int)remain;
+                int y = baseline_y - 1 - r;
+                for (int dx = 0; dx < pair_width; dx++) {
+                    int x = col + dx;
+                    if (x >= 2 + plot_w)
+                        break;
+                    mvwaddstr(win, y, x, up_level[level]);
+                }
+            }
+            wattroff(win, COLOR_PAIR(COLOR_INCOME));
+        } else if (v < 0 && rows_down > 0 && neg_abs_max > 0) {
+            int64_t absv = -v;
+            int units_per_row = 4;
+            int units_total = rows_down * units_per_row;
+            long double scaled =
+                ((long double)absv * (long double)units_total) /
+                (long double)neg_abs_max;
+            int64_t units = (int64_t)(scaled + 0.5L);
+            if (units < 1)
+                units = 1;
+            wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+            for (int r = 0; r < rows_down; r++) {
+                int64_t remain = units - (int64_t)r * units_per_row;
+                if (remain <= 0)
+                    break;
+                int level = (remain >= units_per_row) ? units_per_row : (int)remain;
+                int y = baseline_y + 1 + r;
+                for (int dx = 0; dx < pair_width; dx++) {
+                    int x = col + dx;
+                    if (x >= 2 + plot_w)
+                        break;
+                    mvwaddstr(win, y, x, down_level[level]);
+                }
+            }
+            wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+        }
+    }
+
+    char start_label[16];
+    format_axis_date_short(ls->balance_series[0].date, start_label,
+                           sizeof(start_label));
+    const char *end_label = "Today";
+    int start_len = (int)strlen(start_label);
+    int end_len = (int)strlen(end_label);
+    int end_col = w - 2 - end_len;
+    if (end_col < 2)
+        end_col = 2;
+    mvwprintw(win, layout->chart_axis_row, 2, "%s", start_label);
+    if (end_col > 2 + start_len + 1)
+        mvwprintw(win, layout->chart_axis_row, end_col, "%s", end_label);
 }
 
 // Rebuild display array: filter transactions then sort
@@ -457,6 +671,9 @@ static void reload(txn_list_state_t *ls) {
     free(ls->transactions);
     ls->transactions = NULL;
     ls->txn_count = 0;
+    free(ls->balance_series);
+    ls->balance_series = NULL;
+    ls->balance_series_count = 0;
     ls->cursor = 0;
     ls->scroll_offset = 0;
     txn_list_clear_selected(ls);
@@ -480,6 +697,13 @@ static void reload(txn_list_state_t *ls) {
         if (db_get_account_balance_cents(ls->db, acct_id, &ls->balance_cents) <
             0)
             ls->balance_cents = 0;
+        ls->balance_series_count = db_get_account_balance_series(
+            ls->db, acct_id, BALANCE_CHART_LOOKBACK_DAYS, &ls->balance_series);
+        if (ls->balance_series_count < 0) {
+            ls->balance_series_count = 0;
+            free(ls->balance_series);
+            ls->balance_series = NULL;
+        }
         if (db_get_account_month_net_cents(ls->db, acct_id,
                                            &ls->month_net_cents) < 0)
             ls->month_net_cents = 0;
@@ -491,6 +715,7 @@ static void reload(txn_list_state_t *ls) {
             ls->month_expense_cents = 0;
     } else {
         ls->balance_cents = 0;
+        ls->balance_series_count = 0;
         ls->month_net_cents = 0;
         ls->month_income_cents = 0;
         ls->month_expense_cents = 0;
@@ -517,6 +742,7 @@ void txn_list_destroy(txn_list_state_t *ls) {
     free(ls->accounts);
     free(ls->transactions);
     free(ls->display);
+    free(ls->balance_series);
     free(ls->selected_ids);
     free(ls);
 }
@@ -527,6 +753,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 
     int h, w;
     getmaxyx(win, h, w);
+    txn_layout_t layout = txn_list_layout_for_window(h, w);
 
     // Show terminal cursor only when filter bar is active
     curs_set(ls->filter_active ? 1 : 0);
@@ -643,11 +870,20 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
     }
 
-    // -- Filter bar (row 7): shown when active or text is present --
+    if (layout.show_chart) {
+        draw_balance_chart(ls, win, w, &layout);
+    } else if (layout.chart_hidden_small && ls->account_count > 0) {
+        if (w > 4) {
+            mvwprintw(win, 6, 2, "%-*.*s", w - 4, w - 4,
+                      "Balance chart hidden (window too small)");
+        }
+    }
+
+    // -- Filter bar: shown when active or text is present --
     if (ls->filter_active || ls->filter_len > 0) {
         if (ls->filter_active)
             wattron(win, A_BOLD);
-        mvwprintw(win, FILTER_ROW, 2, "Filter: %s", ls->filter_buf);
+        mvwprintw(win, layout.filter_row, 2, "Filter: %s", ls->filter_buf);
         if (ls->filter_active)
             wattroff(win, A_BOLD);
     }
@@ -658,11 +894,11 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         if (bulk_col < 2)
             bulk_col = 2;
         wattron(win, COLOR_PAIR(COLOR_INFO));
-        mvwprintw(win, FILTER_ROW, bulk_col, "%s", bulk_msg);
+        mvwprintw(win, layout.filter_row, bulk_col, "%s", bulk_msg);
         wattroff(win, COLOR_PAIR(COLOR_INFO));
     }
 
-    // -- Column headers (row 8) with sort direction indicator --
+    // -- Column headers with sort direction indicator --
     // Column layout: Date(12) gap(3) Type(8) gap(3) Category(20) gap(3)
     // Amount(13) gap(3) Payee(30) gap(3) Desc(rest)
     int desc_w = w - 2 - DATE_COL_WIDTH - GAP_WIDTH - TYPE_COL_WIDTH -
@@ -676,43 +912,43 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     // right after the active label text.
     const char *ind_str = ls->sort_asc ? "\u2191" : "\u2193";
     wattron(win, A_BOLD);
-    mvwprintw(win, HEADER_ROW, 2, "%-*s", DATE_COL_WIDTH, "Date");
-    mvwprintw(win, HEADER_ROW, 17, "%-*s", TYPE_COL_WIDTH, "Type");
-    mvwprintw(win, HEADER_ROW, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
-    mvwprintw(win, HEADER_ROW, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
-    mvwprintw(win, HEADER_ROW, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
-    mvwprintw(win, HEADER_ROW, 100, "%-*s", desc_w, "Description");
+    mvwprintw(win, layout.header_row, 2, "%-*s", DATE_COL_WIDTH, "Date");
+    mvwprintw(win, layout.header_row, 17, "%-*s", TYPE_COL_WIDTH, "Type");
+    mvwprintw(win, layout.header_row, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
+    mvwprintw(win, layout.header_row, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
+    mvwprintw(win, layout.header_row, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
+    mvwprintw(win, layout.header_row, 100, "%-*s", desc_w, "Description");
     switch (ls->sort_col) {
     case SORT_DATE:
-        mvwprintw(win, HEADER_ROW, 7, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 7, "%s", ind_str);
         break;
     case SORT_TYPE:
-        mvwprintw(win, HEADER_ROW, 22, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 22, "%s", ind_str);
         break;
     case SORT_CATEGORY:
-        mvwprintw(win, HEADER_ROW, 37, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 37, "%s", ind_str);
         break;
     case SORT_AMOUNT:
-        mvwprintw(win, HEADER_ROW, 54, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 54, "%s", ind_str);
         break;
     case SORT_PAYEE:
-        mvwprintw(win, HEADER_ROW, 69, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 69, "%s", ind_str);
         break;
     case SORT_DESCRIPTION:
-        mvwprintw(win, HEADER_ROW, 108, "%s", ind_str);
+        mvwprintw(win, layout.header_row, 108, "%s", ind_str);
         break;
     default:
         break;
     }
     wattroff(win, A_BOLD);
 
-    // -- Horizontal rule (row 9) --
-    wmove(win, RULE_ROW, 2);
+    // -- Horizontal rule --
+    wmove(win, layout.rule_row, 2);
     for (int i = 2; i < w - 2; i++)
         waddch(win, ACS_HLINE);
 
     // -- Data rows --
-    int visible_rows = h - 1 - DATA_ROW_START;
+    int visible_rows = h - 1 - layout.data_row_start;
     if (visible_rows < 1)
         visible_rows = 1;
 
@@ -720,12 +956,12 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         const char *msg =
             (ls->filter_len > 0) ? "No matches" : "No transactions";
         int mlen = (int)strlen(msg);
-        int row = DATA_ROW_START + visible_rows / 2;
+        int row = layout.data_row_start + visible_rows / 2;
         if (row >= h - 1)
-            row = DATA_ROW_START;
+            row = layout.data_row_start;
         mvwprintw(win, row, (w - mlen) / 2, "%s", msg);
         if (ls->filter_active)
-            wmove(win, FILTER_ROW, 2 + 8 + ls->filter_len);
+            wmove(win, layout.filter_row, 2 + 8 + ls->filter_len);
         return;
     }
 
@@ -748,7 +984,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
             break;
 
         txn_row_t *t = &ls->display[idx];
-        int row = DATA_ROW_START + i;
+        int row = layout.data_row_start + i;
 
         const char *type_str;
         switch (t->type) {
@@ -812,7 +1048,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 
     // Place terminal cursor in filter bar when active
     if (ls->filter_active)
-        wmove(win, FILTER_ROW, 2 + 8 + ls->filter_len);
+        wmove(win, layout.filter_row, 2 + 8 + ls->filter_len);
 }
 
 bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
@@ -1030,17 +1266,17 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
         return "Type to filter  Enter:done  Esc:clear";
 
     if (ls->txn_count == 0)
-        return "1-9 acct  a add  /filter  s sort  \u2190 back";
+        return "90d chart  1-9 acct  a add  /filter  s sort  \u2190 back";
 
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
     if (ls->selected_count > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d selected  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  ls->selected_count, filter_tag);
     } else {
         snprintf(buf, sizeof(buf),
-                 "\u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  filter_tag);
     }

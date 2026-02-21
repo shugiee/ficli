@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const char *account_type_db_strings[] = {
     "CASH", "CHECKING", "SAVINGS", "CREDIT_CARD", "PHYSICAL_ASSET", "INVESTMENT"
@@ -48,9 +49,53 @@ static int bind_text_or_null(sqlite3_stmt *stmt, int idx, const char *value) {
     return sqlite3_bind_null(stmt, idx);
 }
 
+static int normalize_txn_date(const char *src, char out[11]) {
+    if (!src || !out)
+        return -1;
+
+    int y = 0, m = 0, d = 0;
+    int len = (int)strlen(src);
+    if (len == 10 && src[4] == '-' && src[7] == '-') {
+        if (sscanf(src, "%4d-%2d-%2d", &y, &m, &d) != 3)
+            return -1;
+    } else if (len == 10 && src[2] == '/' && src[5] == '/') {
+        if (sscanf(src, "%2d/%2d/%4d", &m, &d, &y) != 3)
+            return -1;
+    } else if (len == 8 && src[2] == '/' && src[5] == '/') {
+        int yy = 0;
+        if (sscanf(src, "%2d/%2d/%2d", &m, &d, &yy) != 3)
+            return -1;
+        y = 2000 + yy;
+    } else {
+        return -1;
+    }
+
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1900)
+        return -1;
+
+    struct tm tmv = {0};
+    tmv.tm_year = y - 1900;
+    tmv.tm_mon = m - 1;
+    tmv.tm_mday = d;
+    tmv.tm_hour = 12;
+    tmv.tm_isdst = -1;
+    if (mktime(&tmv) == (time_t)-1)
+        return -1;
+    if (tmv.tm_year != y - 1900 || tmv.tm_mon != m - 1 || tmv.tm_mday != d)
+        return -1;
+
+    if (strftime(out, 11, "%Y-%m-%d", &tmv) != 10)
+        return -1;
+    return 0;
+}
+
 static int insert_transfer_row(sqlite3 *db, const transaction_t *txn,
                                int64_t account_id, int64_t transfer_id,
                                int64_t *out_id) {
+    char norm_date[11];
+    if (normalize_txn_date(txn->date, norm_date) < 0)
+        return -1;
+
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(
         db,
@@ -64,7 +109,7 @@ static int insert_transfer_row(sqlite3 *db, const transaction_t *txn,
 
     sqlite3_bind_int64(stmt, 1, txn->amount_cents);
     sqlite3_bind_int64(stmt, 2, account_id);
-    sqlite3_bind_text(stmt, 3, txn->date, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, norm_date, -1, SQLITE_TRANSIENT);
     bind_text_or_null(stmt, 4, txn->payee);
     bind_text_or_null(stmt, 5, txn->description);
     if (transfer_id > 0)
@@ -81,6 +126,35 @@ static int insert_transfer_row(sqlite3 *db, const transaction_t *txn,
 
     if (out_id)
         *out_id = sqlite3_last_insert_rowid(db);
+    return 0;
+}
+
+static int parse_ymd(const char *date, int *out_y, int *out_m, int *out_d) {
+    if (!date || !out_y || !out_m || !out_d)
+        return -1;
+    if (strlen(date) != 10)
+        return -1;
+    if (sscanf(date, "%4d-%2d-%2d", out_y, out_m, out_d) != 3)
+        return -1;
+    return 0;
+}
+
+static int date_add_one_day(char date[11]) {
+    int y = 0, m = 0, d = 0;
+    if (parse_ymd(date, &y, &m, &d) < 0)
+        return -1;
+
+    struct tm tmv = {0};
+    tmv.tm_year = y - 1900;
+    tmv.tm_mon = m - 1;
+    tmv.tm_mday = d + 1;
+    tmv.tm_hour = 12;
+    tmv.tm_isdst = -1;
+    if (mktime(&tmv) == (time_t)-1)
+        return -1;
+
+    if (strftime(date, 11, "%Y-%m-%d", &tmv) != 10)
+        return -1;
     return 0;
 }
 
@@ -692,6 +766,146 @@ int db_get_account_month_expense_cents(sqlite3 *db, int64_t account_id,
     return 0;
 }
 
+int db_get_account_balance_series(sqlite3 *db, int64_t account_id,
+                                  int lookback_days, balance_point_t **out) {
+    if (!out || lookback_days <= 0)
+        return -1;
+    *out = NULL;
+
+    balance_point_t *list =
+        calloc((size_t)lookback_days, sizeof(balance_point_t));
+    if (!list)
+        return -1;
+
+    char offset[32];
+    snprintf(offset, sizeof(offset), "-%d days", lookback_days - 1);
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db, "SELECT date('now', 'localtime', ?)", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_balance_series prepare: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, offset, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_balance_series start step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        free(list);
+        return -1;
+    }
+    const char *start_date = (const char *)sqlite3_column_text(stmt, 0);
+    char cur_date[11];
+    snprintf(cur_date, sizeof(cur_date), "%s", start_date ? start_date : "");
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    for (int i = 0; i < lookback_days; i++) {
+        snprintf(list[i].date, sizeof(list[i].date), "%s", cur_date);
+        if (i < lookback_days - 1 && date_add_one_day(cur_date) < 0) {
+            free(list);
+            return -1;
+        }
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(CASE"
+        "  WHEN type = 'INCOME' THEN amount_cents"
+        "  WHEN type = 'EXPENSE' THEN -amount_cents"
+        "  WHEN type = 'TRANSFER' THEN CASE"
+        "    WHEN transfer_id IS NOT NULL AND id = transfer_id THEN -amount_cents"
+        "    ELSE amount_cents"
+        "  END"
+        "  ELSE 0"
+        " END), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?"
+        "   AND date < date('now', 'localtime', ?)",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_balance_series opening prepare: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, account_id);
+    sqlite3_bind_text(stmt, 2, offset, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "db_get_account_balance_series opening step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        free(list);
+        return -1;
+    }
+    int64_t opening_balance = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT date,"
+        "       COALESCE(SUM(CASE"
+        "         WHEN type = 'INCOME' THEN amount_cents"
+        "         WHEN type = 'EXPENSE' THEN -amount_cents"
+        "         WHEN type = 'TRANSFER' THEN CASE"
+        "           WHEN transfer_id IS NOT NULL AND id = transfer_id THEN -amount_cents"
+        "           ELSE amount_cents"
+        "         END"
+        "         ELSE 0"
+        "       END), 0)"
+        " FROM transactions"
+        " WHERE account_id = ?"
+        "   AND date >= date('now', 'localtime', ?)"
+        "   AND date <= date('now', 'localtime')"
+        " GROUP BY date"
+        " ORDER BY date",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_account_balance_series deltas prepare: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, account_id);
+    sqlite3_bind_text(stmt, 2, offset, -1, SQLITE_TRANSIENT);
+
+    int idx = 0;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *date = (const char *)sqlite3_column_text(stmt, 0);
+        if (!date)
+            continue;
+        int64_t net_cents = sqlite3_column_int64(stmt, 1);
+        while (idx < lookback_days && strcmp(list[idx].date, date) < 0)
+            idx++;
+        if (idx < lookback_days && strcmp(list[idx].date, date) == 0)
+            list[idx].balance_cents += net_cents;
+    }
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_account_balance_series deltas step: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        free(list);
+        return -1;
+    }
+    sqlite3_finalize(stmt);
+
+    int64_t running = opening_balance;
+    for (int i = 0; i < lookback_days; i++) {
+        running += list[i].balance_cents;
+        list[i].balance_cents = running;
+    }
+
+    *out = list;
+    return lookback_days;
+}
+
 int db_delete_account(sqlite3 *db, int64_t account_id, bool delete_transactions) {
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM accounts WHERE id = ?", -1,
@@ -903,6 +1117,10 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
 }
 
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
+    char norm_date[11];
+    if (normalize_txn_date(txn->date, norm_date) < 0)
+        return -1;
+
     const char *type_str = transaction_type_to_str(txn->type);
 
     sqlite3_stmt *stmt = NULL;
@@ -922,7 +1140,7 @@ int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
         sqlite3_bind_int64(stmt, 4, txn->category_id);
     else
         sqlite3_bind_null(stmt, 4);
-    sqlite3_bind_text(stmt, 5, txn->date, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 5, norm_date, -1, SQLITE_TRANSIENT);
     if (txn->payee[0] != '\0')
         sqlite3_bind_text(stmt, 6, txn->payee, -1, SQLITE_STATIC);
     else
@@ -1090,6 +1308,9 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
         return -1;
     if (txn->account_id <= 0 || to_account_id <= 0 || txn->account_id == to_account_id)
         return -3;
+    char norm_date[11];
+    if (normalize_txn_date(txn->date, norm_date) < 0)
+        return -1;
 
     int rc = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
     if (rc != SQLITE_OK) {
@@ -1161,7 +1382,7 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
     }
     sqlite3_bind_int64(stmt, 1, txn->amount_cents);
     sqlite3_bind_int64(stmt, 2, txn->account_id);
-    sqlite3_bind_text(stmt, 3, txn->date, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, norm_date, -1, SQLITE_TRANSIENT);
     bind_text_or_null(stmt, 4, txn->payee);
     bind_text_or_null(stmt, 5, txn->description);
     sqlite3_bind_int64(stmt, 6, transfer_id);
@@ -1189,7 +1410,7 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
         }
         sqlite3_bind_int64(stmt, 1, txn->amount_cents);
         sqlite3_bind_int64(stmt, 2, to_account_id);
-        sqlite3_bind_text(stmt, 3, txn->date, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, norm_date, -1, SQLITE_TRANSIENT);
         bind_text_or_null(stmt, 4, txn->payee);
         bind_text_or_null(stmt, 5, txn->description);
         sqlite3_bind_int64(stmt, 6, transfer_id);
@@ -1281,6 +1502,9 @@ int db_delete_transaction(sqlite3 *db, int txn_id) {
 
 int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
     if (!txn) return -1;
+    char norm_date[11];
+    if (normalize_txn_date(txn->date, norm_date) < 0)
+        return -1;
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
@@ -1313,6 +1537,7 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
     stmt = NULL;
 
     transaction_t normalized = *txn;
+    snprintf(normalized.date, sizeof(normalized.date), "%s", norm_date);
     if (normalized.transfer_id != 0) {
         normalized.type = TRANSACTION_TRANSFER;
         normalized.category_id = 0;

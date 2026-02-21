@@ -52,10 +52,6 @@ static bool is_new_database(sqlite3 *db) {
 
 static int create_schema(sqlite3 *db) {
     const char *schema_sql =
-        "CREATE TABLE IF NOT EXISTS schema_version ("
-        "    version INTEGER PRIMARY KEY"
-        ");"
-
         "CREATE TABLE IF NOT EXISTS accounts ("
         "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "    name TEXT NOT NULL UNIQUE,"
@@ -109,8 +105,6 @@ static int create_schema(sqlite3 *db) {
 
 static int seed_defaults(sqlite3 *db) {
     const char *seed_sql =
-        "INSERT INTO schema_version (version) VALUES (4);"
-
         "INSERT INTO accounts (name, type) VALUES ('Cash', 'CASH');"
 
         "INSERT INTO categories (name, type, parent_id) VALUES"
@@ -129,67 +123,6 @@ static int seed_defaults(sqlite3 *db) {
         "    ('Other Income', 'INCOME', NULL);";
 
     return exec_sql(db, seed_sql);
-}
-
-static int get_schema_version(sqlite3 *db) {
-    sqlite3_stmt *stmt = NULL;
-    int rc = sqlite3_prepare_v2(db,
-        "SELECT MAX(version) FROM schema_version", -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return 0;
-    int ver = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW)
-        ver = sqlite3_column_int(stmt, 0);
-    sqlite3_finalize(stmt);
-    return ver;
-}
-
-static int migrate_v1_to_v2(sqlite3 *db) {
-    if (exec_sql(db,
-            "ALTER TABLE accounts ADD COLUMN type TEXT NOT NULL DEFAULT 'CASH'"
-            " CHECK(type IN ('CASH','CHECKING','SAVINGS','CREDIT_CARD','PHYSICAL_ASSET','INVESTMENT'));"
-            "INSERT INTO schema_version (version) VALUES (2);") != 0) {
-        fprintf(stderr, "Migration v1->v2 failed\n");
-        return -1;
-    }
-    return 0;
-}
-
-static int migrate_v2_to_v3(sqlite3 *db) {
-    // card_last4 may already exist if it was added to the schema DDL before
-    // the migration was introduced; ignore "duplicate column" errors.
-    sqlite3_exec(db, "ALTER TABLE accounts ADD COLUMN card_last4 TEXT;",
-                 NULL, NULL, NULL);
-    if (exec_sql(db, "INSERT INTO schema_version (version) VALUES (3);") != 0) {
-        fprintf(stderr, "Migration v2->v3 failed\n");
-        return -1;
-    }
-    return 0;
-}
-
-static int migrate_v3_to_v4(sqlite3 *db) {
-    if (exec_sql(db,
-            "ALTER TABLE transactions ADD COLUMN payee TEXT;"
-            "INSERT INTO schema_version (version) VALUES (4);") != 0) {
-        fprintf(stderr, "Migration v3->v4 failed\n");
-        return -1;
-    }
-    return 0;
-}
-
-static int run_migrations(sqlite3 *db) {
-    int ver = get_schema_version(db);
-    if (ver < 2) {
-        if (migrate_v1_to_v2(db) != 0) return -1;
-        ver = 2;
-    }
-    if (ver < 3) {
-        if (migrate_v2_to_v3(db) != 0) return -1;
-        ver = 3;
-    }
-    if (ver < 4) {
-        if (migrate_v3_to_v4(db) != 0) return -1;
-    }
-    return 0;
 }
 
 sqlite3 *db_init(const char *path) {
@@ -227,12 +160,6 @@ sqlite3 *db_init(const char *path) {
     if (new_db) {
         if (seed_defaults(db) != 0) {
             fprintf(stderr, "Failed to seed default data\n");
-            sqlite3_close(db);
-            return NULL;
-        }
-    } else {
-        if (run_migrations(db) != 0) {
-            fprintf(stderr, "Failed to run database migrations\n");
             sqlite3_close(db);
             return NULL;
         }

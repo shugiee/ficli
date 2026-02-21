@@ -77,7 +77,8 @@ static void normalize_col(const char *src, char *dst, int dstlen) {
     dst[di] = '\0';
 }
 
-// Normalize date to YYYY-MM-DD. Handles MM/DD/YYYY and YYYY-MM-DD input.
+// Normalize date to YYYY-MM-DD. Handles MM/DD/YYYY, MM/DD/YY, and
+// YYYY-MM-DD input.
 // Returns true on success, false if format unrecognized.
 static bool normalize_date(const char *src, char *dst) {
     int len = (int)strlen(src);
@@ -94,6 +95,21 @@ static bool normalize_date(const char *src, char *dst) {
     if (len == 10 && src[4] == '-' && src[7] == '-') {
         // Already YYYY-MM-DD
         memcpy(dst, src, 10);
+        dst[10] = '\0';
+        return true;
+    }
+    if (len == 8 && src[2] == '/' && src[5] == '/') {
+        // MM/DD/YY -> 20YY-MM-DD
+        dst[0] = '2';
+        dst[1] = '0';
+        dst[2] = src[6];
+        dst[3] = src[7];
+        dst[4] = '-';
+        dst[5] = src[0];
+        dst[6] = src[1];
+        dst[7] = '-';
+        dst[8] = src[3];
+        dst[9] = src[4];
         dst[10] = '\0';
         return true;
     }

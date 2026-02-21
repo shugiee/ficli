@@ -65,7 +65,6 @@ make clean    # clean build artifacts
 - **Amounts:** Stored as integers in cents to avoid floating-point issues
 - **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
-- **Schema versioning:** `schema_version` table for migrations (currently version 3)
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
 - **Seed backup file** flicli_seed.sql. To use it: `sqlite3 ~/.local/share/ficli/ficli.db < ficli_seed.sql`
 
@@ -100,13 +99,13 @@ make clean    # clean build artifacts
 - [x] Allow adding, editing, and deleting Categories in categories UI
 - [x] Use ctrl-d and ctrl-u for half-page down/up in transaction list
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
+- [x] Show chart of account balance over time ([plan](../.claude/plans/account-balance-chart.md))
+- [ ] Fix error UI when adding an account with a name conflict
 - [ ] Summary/report views
-- [ ] Show chart of account balance over time
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow user to type to filter dropdowns
 - [ ] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [ ] Budget tracking
-- [ ] Fix error UI when adding an account with a name conflict
 - [ ] Allow archiving accounts
 - [ ] Support CSV imports for investment accounts
 - [ ] Data export (CSV)

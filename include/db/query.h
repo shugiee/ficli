@@ -94,6 +94,17 @@ int db_get_account_month_income_cents(sqlite3 *db, int64_t account_id,
 int db_get_account_month_expense_cents(sqlite3 *db, int64_t account_id,
                                        int64_t *out_cents);
 
+// Daily account balance point for charting.
+typedef struct {
+    char date[11]; // "YYYY-MM-DD"
+    int64_t balance_cents;
+} balance_point_t;
+
+// Fetch contiguous daily balance points for lookback_days ending today
+// (localtime). Caller frees *out. Returns count, -1 on error.
+int db_get_account_balance_series(sqlite3 *db, int64_t account_id,
+                                  int lookback_days, balance_point_t **out);
+
 // Delete account. If delete_transactions is true, related transactions are
 // deleted first. Returns 0 success, -3 has related transactions, -2 not found,
 // -1 error.

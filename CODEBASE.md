@@ -23,8 +23,8 @@ Quick-reference for the current state of every file, its role, and key implement
 |------|---------|
 | `include/db/db.h` | `db_init(path)` returns `sqlite3*`, `db_close(db)` |
 | `src/db/db.c` (175 lines) | Creates directory, opens SQLite, creates schema (5 tables + 6 indexes), seeds defaults on first run. Key helpers: `ensure_dir_exists()`, `exec_sql()`, `is_new_database()`, `create_schema()`, `seed_defaults()`. |
-| `include/db/query.h` | CRUD declarations + `txn_row_t` struct for list display |
-| `src/db/query.c` (208 lines) | `db_get_accounts()`, `db_get_categories()`, `db_get_transactions()`, `db_insert_transaction()`. All follow same pattern: prepare, bind, loop with doubling-array realloc, finalize. Return count or -1. Caller frees `*out`. |
+| `include/db/query.h` | CRUD declarations + list/chart row structs (`txn_row_t`, `balance_point_t`) |
+| `src/db/query.c` | Query implementations for accounts/categories/transactions, account summaries, and balance-series chart data (`db_get_account_balance_series()`). List-style fetchers use prepare/bind/step/realloc/finalize patterns and return count or -1. |
 
 ### Models (`include/models/`)
 
@@ -45,7 +45,7 @@ Quick-reference for the current state of every file, its role, and key implement
 | `include/ui/form.h` | `form_add_transaction()` returns `FORM_SAVED` or `FORM_CANCELLED` |
 | `src/ui/form.c` (620 lines) | Modal transaction form. Centered overlay on content window. Fields: Type (toggle), Amount (digits+dot), Account (dropdown), Category (dropdown, reloads on type change), Date (YYYY-MM-DD, defaults today), Description (free text), Submit button. Dropdowns scroll with MAX_DROP=5 visible. Saves via `db_insert_transaction()`. |
 | `include/ui/txn_list.h` | Opaque `txn_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty/get_current_account_id |
-| `src/ui/txn_list.c` | Scrollable transaction list per account. Account tabs (1-9 switching), column headers, colored amounts (red=expense, green=income), cursor with A_REVERSE, auto-scroll. Lazy-loads data on dirty flag. |
+| `src/ui/txn_list.c` | Scrollable transaction list per account with summary header and 90-day balance trend chart (auto-hides on small terminals). Account tabs (1-9 switching), sorting/filtering, colored amounts, bulk selection/edit helpers, and lazy reload via dirty flag. |
 | `include/ui/import_dialog.h` | `import_dialog(parent, db, current_account_id)` — returns imported count or -1 if cancelled |
 | `src/ui/import_dialog.c` | Multi-stage modal dialog (56×20). Stages: PATH (text input + parse), CONFIRM_CC (card list with match info and import/skip counts), SELECT_ACCT (j/k scrollable account list), RESULT (final counts), ERROR (error message). |
 
@@ -97,12 +97,10 @@ Types are stored as TEXT in SQLite (`"EXPENSE"`, `"INCOME"`, `"TRANSFER"`) and c
 
 ## Schema (v2)
 
-**Tables:** `schema_version`, `accounts`, `categories`, `transactions`, `budgets`
+**Tables:** `accounts`, `categories`, `transactions`, `budgets`
 
 **Default seed data:** 1 account ("Cash", type CASH), 9 expense categories, 4 income categories.
 
 **Indexes:** `idx_transactions_date`, `idx_transactions_category`, `idx_transactions_account`, `idx_transactions_transfer`, `idx_budgets_month`, `idx_categories_parent`.
 
 Amounts are stored as `INTEGER` cents throughout. Dates are `TEXT` in `YYYY-MM-DD` format.
-
-**Migrations:** `db_init()` checks `schema_version` and runs migrations for existing databases. v1→v2 adds `type TEXT NOT NULL DEFAULT 'CASH'` column to `accounts`. v2→v3 adds `card_last4 TEXT` (nullable) column to `accounts`.
