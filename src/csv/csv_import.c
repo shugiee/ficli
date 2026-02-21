@@ -512,6 +512,11 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
+        if (db_get_most_recent_category_for_payee(
+                db, account_id, row->payee, row->type, &txn.category_id) < 0) {
+            ret = -1;
+            goto cleanup;
+        }
 
         if (db_insert_transaction(db, &txn) < 0) {
             ret = -1;
@@ -571,6 +576,11 @@ int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
+        if (db_get_most_recent_category_for_payee(
+                db, account_id, row->payee, row->type, &txn.category_id) < 0) {
+            ret = -1;
+            break;
+        }
 
         if (db_insert_transaction(db, &txn) < 0) {
             ret = -1;

@@ -362,6 +362,56 @@ int db_apply_category_to_uncategorized_by_payee(sqlite3 *db, const char *payee,
     return sqlite3_changes(db);
 }
 
+int db_get_most_recent_category_for_payee(sqlite3 *db, int64_t account_id,
+                                          const char *payee,
+                                          transaction_type_t type,
+                                          int64_t *out_category_id) {
+    if (!out_category_id)
+        return -1;
+    *out_category_id = 0;
+
+    if (account_id <= 0 || !payee || payee[0] == '\0' ||
+        type == TRANSACTION_TRANSFER)
+        return 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT category_id FROM transactions"
+        " WHERE account_id = ?"
+        "   AND payee = ?"
+        "   AND type = ?"
+        " ORDER BY date DESC, id DESC"
+        " LIMIT 1",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_most_recent_category_for_payee prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    sqlite3_bind_text(stmt, 2, payee, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, transaction_type_to_str(type), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        if (sqlite3_column_type(stmt, 0) != SQLITE_NULL)
+            *out_category_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    if (rc == SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+
+    fprintf(stderr, "db_get_most_recent_category_for_payee step: %s\n",
+            sqlite3_errmsg(db));
+    sqlite3_finalize(stmt);
+    return -1;
+}
+
 static int db_find_category_id(sqlite3 *db, category_type_t type,
                                const char *name, int64_t parent_id,
                                int64_t *out_id) {

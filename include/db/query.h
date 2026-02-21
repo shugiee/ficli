@@ -84,6 +84,14 @@ int db_apply_category_to_uncategorized_by_payee(sqlite3 *db, const char *payee,
                                                 transaction_type_t type,
                                                 int64_t category_id);
 
+// Get category from the most recent transaction in an account with exact payee
+// and type. Sets *out_category_id to 0 when no matching row or when the
+// matching row is uncategorized. Returns 0 on success, -1 on error.
+int db_get_most_recent_category_for_payee(sqlite3 *db, int64_t account_id,
+                                          const char *payee,
+                                          transaction_type_t type,
+                                          int64_t *out_category_id);
+
 // Account-level summary helpers. Returns 0 on success, -1 on error.
 int db_get_account_balance_cents(sqlite3 *db, int64_t account_id,
                                  int64_t *out_cents);

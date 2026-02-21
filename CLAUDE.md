@@ -101,6 +101,7 @@ make clean    # clean build artifacts
 - [x] Show chart of account balance over time ([plan](../.claude/plans/account-balance-chart.md))
 - [x] Add generic error popup that's centered, near the top of the UI. Use it to show error when account is added with naming conflict. ([plan](../.claude/plans/shared-error-popup-account-name-conflict.md))
 - [x] Add popout for keyboard shortcuts reference
+- [x] Support auto-categorization ([plan](../.claude/plans/auto-categorization-import-payee.md))
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow user to type to filter dropdowns
@@ -119,7 +120,6 @@ make clean    # clean build artifacts
 - [ ] When deleting a category, offer to reassign transactions to another category
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption
-- [ ] Support auto-categorization
 - [ ] Allow user to choose whether to delete linked transfer transactions when deleting a transaction
 - [ ] Add error UI for handling logic mismatches, e.g. transfers with more than 2 transactions
 - [ ] Add CLI arguments for quick actions (e.g., `ficli add -a`)
