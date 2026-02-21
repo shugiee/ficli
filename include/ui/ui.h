@@ -3,14 +3,10 @@
 
 #include <sqlite3.h>
 
-// Keep in sync with menu_labels in ui.c
 typedef enum {
-    SCREEN_DASHBOARD,
-    SCREEN_TRANSACTIONS,
-    SCREEN_ACCOUNTS,
-    SCREEN_CATEGORIES,
-    SCREEN_BUDGETS,
-    SCREEN_REPORTS,
+#define SCREEN_DEF(id, label, content_focusable) id,
+#include "ui/screens.def"
+#undef SCREEN_DEF
     SCREEN_COUNT
 } screen_t;
 

@@ -18,9 +18,16 @@
 
 #define SIDEBAR_WIDTH 18
 
-// Keep in sync with screen_t enum in ui.h
-static const char *menu_labels[SCREEN_COUNT] = {
-    "Dashboard", "Transactions", "Accounts", "Categories", "Budgets", "Reports",
+typedef struct {
+    const char *label;
+    bool content_focusable;
+} screen_info_t;
+
+static const screen_info_t screen_info[SCREEN_COUNT] = {
+#define SCREEN_DEF(id, label, content_focusable)                                  \
+    [id] = {label, content_focusable},
+#include "ui/screens.def"
+#undef SCREEN_DEF
 };
 
 static struct {
@@ -289,17 +296,17 @@ static void ui_draw_sidebar(void) {
             if (state.content_focused) {
                 wattron(state.sidebar, A_DIM | A_REVERSE);
                 mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3,
-                          menu_labels[i]);
+                          screen_info[i].label);
                 wattroff(state.sidebar, A_DIM | A_REVERSE);
             } else {
                 wattron(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
                 mvwprintw(state.sidebar, i + 1, 1, " %-*s", SIDEBAR_WIDTH - 3,
-                          menu_labels[i]);
+                          screen_info[i].label);
                 wattroff(state.sidebar, COLOR_PAIR(COLOR_SELECTED));
             }
         } else {
             mvwprintw(state.sidebar, i + 1, 2, "%-*s", SIDEBAR_WIDTH - 3,
-                      menu_labels[i]);
+                      screen_info[i].label);
         }
     }
     wnoutrefresh(state.sidebar);
@@ -329,7 +336,7 @@ static void ui_draw_content(void) {
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
-        const char *title = menu_labels[state.current_screen];
+        const char *title = screen_info[state.current_screen].label;
         int len = (int)strlen(title);
         mvwprintw(state.content, h / 2, (w - len) / 2, "%s", title);
     }
@@ -526,10 +533,8 @@ static void ui_handle_input(int ch) {
     case KEY_RIGHT:
     case 'l':
         state.current_screen = state.sidebar_sel;
-        if (state.current_screen == SCREEN_TRANSACTIONS ||
-            state.current_screen == SCREEN_CATEGORIES ||
-            state.current_screen == SCREEN_ACCOUNTS)
-            state.content_focused = true;
+        state.content_focused =
+            screen_info[state.current_screen].content_focusable;
         break;
     case 'a': {
         transaction_t txn = {0};
