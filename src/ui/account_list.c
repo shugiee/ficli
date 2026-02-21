@@ -2,6 +2,7 @@
 #include "db/query.h"
 #include "models/account.h"
 #include "ui/colors.h"
+#include "ui/error_popup.h"
 #include "ui/form.h"
 
 #include <ctype.h>
@@ -353,7 +354,7 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     }
 }
 
-static bool submit_account(account_list_state_t *ls) {
+static bool submit_account(account_list_state_t *ls, WINDOW *parent) {
     if (ls->name_buf[0] == '\0') {
         snprintf(ls->message, sizeof(ls->message), "Name cannot be empty");
         return false;
@@ -362,6 +363,11 @@ static bool submit_account(account_list_state_t *ls) {
         (ls->type_sel == ACCOUNT_CREDIT_CARD) ? ls->card_last4_buf : NULL;
     int64_t id = db_insert_account(ls->db, ls->name_buf,
                                    (account_type_t)ls->type_sel, card);
+    if (id == -2) {
+        ui_show_error_popup(parent, " Account Error ",
+                            "An account with that name already exists.");
+        return false;
+    }
     if (id < 0) {
         snprintf(ls->message, sizeof(ls->message), "Error adding account");
         return false;
@@ -390,6 +396,27 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
             return true;
         case KEY_DOWN:
         case 'j':
+            if (ls->account_count > 0)
+                ls->cursor = 0;
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    if (ls->show_add_form && ls->cursor == CURSOR_ADD_BUTTON) {
+        switch (ch) {
+        case 27:
+            ls->show_add_form = false;
+            ls->cursor = CURSOR_ADD_BUTTON;
+            return true;
+        case KEY_DOWN:
+        case 'j':
+        case '\n':
+            ls->cursor = CURSOR_NAME;
+            return true;
+        case KEY_UP:
+        case 'k':
             if (ls->account_count > 0)
                 ls->cursor = 0;
             return true;
@@ -518,7 +545,7 @@ bool account_list_handle_input(account_list_state_t *ls, WINDOW *parent, int ch)
             }
             return true;
         case '\n':
-            if (submit_account(ls)) {
+            if (submit_account(ls, parent)) {
                 ls->show_add_form = false;
                 ls->cursor = CURSOR_ADD_BUTTON;
             }

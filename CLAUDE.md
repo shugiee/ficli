@@ -99,7 +99,7 @@ make clean    # clean build artifacts
 - [x] Allow adding, editing, and deleting Categories in categories UI
 - [x] Use ctrl-d and ctrl-u for half-page down/up in transaction list
 - [x] Show chart of account balance over time ([plan](../.claude/plans/account-balance-chart.md))
-- [ ] Add generic error popup that's centered, near the top of the UI. Use it to show error when account is added with naming conflict.
+- [x] Add generic error popup that's centered, near the top of the UI. Use it to show error when account is added with naming conflict. ([plan](../.claude/plans/shared-error-popup-account-name-conflict.md))
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow user to type to filter dropdowns

@@ -223,12 +223,12 @@ int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type, co
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
-    if (rc != SQLITE_DONE) {
-        fprintf(stderr, "db_insert_account step: %s\n", sqlite3_errmsg(db));
-        return -1;
-    }
-
-    return sqlite3_last_insert_rowid(db);
+    if (rc == SQLITE_DONE)
+        return sqlite3_last_insert_rowid(db);
+    if (rc == SQLITE_CONSTRAINT)
+        return -2;
+    fprintf(stderr, "db_insert_account step: %s\n", sqlite3_errmsg(db));
+    return -1;
 }
 
 int db_update_account(sqlite3 *db, const account_t *account) {
@@ -256,12 +256,13 @@ int db_update_account(sqlite3 *db, const account_t *account) {
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    if (rc != SQLITE_DONE) {
-        fprintf(stderr, "db_update_account step: %s\n", sqlite3_errmsg(db));
-        return -1;
-    }
+    if (rc == SQLITE_DONE)
+        return 0;
+    if (rc == SQLITE_CONSTRAINT)
+        return -2;
 
-    return 0;
+    fprintf(stderr, "db_update_account step: %s\n", sqlite3_errmsg(db));
+    return -1;
 }
 
 int db_count_transactions_for_account(sqlite3 *db, int64_t account_id) {

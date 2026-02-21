@@ -24,3 +24,4 @@
 #define COLOR_INCOME      8  // CUST_GREEN on CUST_BG — income amounts
 #define COLOR_INFO        9  // CUST_AQUA on CUST_BG — info text
 #define COLOR_FORM_DROPDOWN 10 // CUST_BG on CUST_SURFACE — dropdown layer
+#define COLOR_ERROR       11 // CUST_RED on CUST_BG — error borders/messages

@@ -1350,13 +1350,22 @@ static bool account_form_validate_and_save(account_form_state_t *fs) {
     }
 
     if (fs->is_edit) {
-        if (db_update_account(fs->db, &updated) < 0) {
+        int rc = db_update_account(fs->db, &updated);
+        if (rc == -2) {
+            snprintf(fs->error, sizeof(fs->error), "Name already exists");
+            return false;
+        }
+        if (rc < 0) {
             snprintf(fs->error, sizeof(fs->error), "Database error");
             return false;
         }
     } else {
         int64_t id = db_insert_account(fs->db, updated.name, updated.type,
                                        updated.card_last4);
+        if (id == -2) {
+            snprintf(fs->error, sizeof(fs->error), "Name already exists");
+            return false;
+        }
         if (id < 0) {
             snprintf(fs->error, sizeof(fs->error), "Database error");
             return false;

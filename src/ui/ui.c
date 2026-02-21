@@ -248,6 +248,7 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
     init_pair(COLOR_INFO,        CUST_AQUA,  CUST_BG);
     init_pair(COLOR_FORM_DROPDOWN, CUST_FG,  CUST_SURFACE);
+    init_pair(COLOR_ERROR,       CUST_RED,   CUST_BG);
 }
 
 static void ui_create_layout(void) {
@@ -583,7 +584,7 @@ void ui_init(void) {
     keypad(stdscr, TRUE);
     // Keep Esc responsive while still allowing escape-sequence keys to parse.
 #ifdef NCURSES_VERSION
-    (void)set_escdelay(50);
+    (void)set_escdelay(150);
 #endif
     curs_set(0);
 

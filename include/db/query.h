@@ -12,11 +12,11 @@
 int db_get_accounts(sqlite3 *db, account_t **out);
 
 // Insert an account. card_last4 may be NULL or "" for non-credit-card accounts.
-// Returns new row id, -1 on error.
+// Returns new row id, -2 on uniqueness conflict, -1 on error.
 int64_t db_insert_account(sqlite3 *db, const char *name, account_type_t type, const char *card_last4);
 
 // Update an account by id. card_last4 may be NULL or "" for non-credit-card accounts.
-// Returns 0 on success, -1 on error.
+// Returns 0 on success, -2 on uniqueness conflict, -1 on error.
 int db_update_account(sqlite3 *db, const account_t *account);
 
 // Fetch categories by type. Produces "Parent:Child" display names via JOIN.
