@@ -4,6 +4,7 @@
 #include "ui/colors.h"
 #include "ui/error_popup.h"
 #include "ui/form.h"
+#include "ui/resize.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -81,6 +82,11 @@ static bool confirm_delete_account(WINDOW *parent, const char *account_name,
     bool done = false;
     while (!done) {
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            confirm = false;
+            done = true;
+            continue;
+        }
         switch (ch) {
         case 'y':
         case 'Y':

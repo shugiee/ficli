@@ -4,6 +4,7 @@
 #include "ui/colors.h"
 #include "ui/form.h"
 #include "ui/import_dialog.h"
+#include "ui/resize.h"
 #include "ui/txn_list.h"
 
 #include <errno.h>
@@ -17,6 +18,7 @@
 #include <unistd.h>
 
 #define SIDEBAR_WIDTH 18
+#define RESIZE_DEBOUNCE_MS 60
 
 typedef struct {
     const char *label;
@@ -282,6 +284,31 @@ static void ui_destroy_layout(void) {
     delwin(state.status);
 }
 
+static void ui_handle_resize_event(void) {
+#ifdef NCURSES_VERSION
+    (void)resize_term(0, 0);
+#endif
+
+    int next = ERR;
+    timeout(RESIZE_DEBOUNCE_MS);
+    while (1) {
+        next = getch();
+        if (next != KEY_RESIZE)
+            break;
+#ifdef NCURSES_VERSION
+        (void)resize_term(0, 0);
+#endif
+    }
+    timeout(-1);
+
+    ui_destroy_layout();
+    ui_create_layout();
+    clearok(stdscr, TRUE);
+
+    if (next != ERR)
+        (void)ungetch(next);
+}
+
 static void ui_draw_header(void) {
     werase(state.header);
     wbkgd(state.header, COLOR_PAIR(COLOR_HEADER));
@@ -459,6 +486,10 @@ static void ui_show_help(void) {
         wrefresh(w);
 
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            done = true;
+            continue;
+        }
         if (scrollable && (ch == KEY_DOWN || ch == 'j')) {
             if (scroll < max_scroll)
                 scroll++;
@@ -577,8 +608,7 @@ static void ui_handle_input(int ch) {
         ui_show_help();
         break;
     case KEY_RESIZE:
-        ui_destroy_layout();
-        ui_create_layout();
+        ui_handle_resize_event();
         break;
     }
 }

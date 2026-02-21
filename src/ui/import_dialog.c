@@ -3,6 +3,7 @@
 #include "db/query.h"
 #include "models/account.h"
 #include "ui/colors.h"
+#include "ui/resize.h"
 
 #include <ncurses.h>
 #include <stdlib.h>
@@ -251,6 +252,11 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
             wrefresh(w);
 
             int ch = wgetch(w);
+            if (ui_requeue_resize_event(ch)) {
+                done = true;
+                ret = -1;
+                break;
+            }
             if (ch == 27) {
                 done = true;
                 ret = -1;
@@ -369,6 +375,11 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
             wrefresh(w);
 
             int ch = wgetch(w);
+            if (ui_requeue_resize_event(ch)) {
+                done = true;
+                ret = -1;
+                break;
+            }
             if (ch == 27) {
                 done = true;
                 ret = -1;
@@ -437,6 +448,11 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
             wrefresh(w);
 
             int ch = wgetch(w);
+            if (ui_requeue_resize_event(ch)) {
+                done = true;
+                ret = -1;
+                break;
+            }
             if (ch == 27) {
                 done = true;
                 ret = -1;
@@ -478,7 +494,8 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
                       result_count, result_skipped);
 
             wrefresh(w);
-            wgetch(w);
+            int ch = wgetch(w);
+            (void)ui_requeue_resize_event(ch);
             done = true;
             break;
         }
@@ -497,7 +514,8 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
             wattroff(w, A_BOLD);
 
             wrefresh(w);
-            wgetch(w);
+            int ch = wgetch(w);
+            (void)ui_requeue_resize_event(ch);
             done = true;
             ret = -1;
             break;

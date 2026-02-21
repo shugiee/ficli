@@ -103,6 +103,7 @@ make clean    # clean build artifacts
 - [x] Add popout for keyboard shortcuts reference
 - [x] Support auto-categorization ([plan](../.claude/plans/auto-categorization-import-payee.md))
 - [x] Allow user to type to filter dropdowns ([plan](../.claude/plans/dropdown-type-filter.md))
+- [x] Handle window resizing better: debounce resize events, and make sure all UI components adjust correctly without user interaction with UI ([plan](../.claude/plans/window-resize-debounce.md))
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
@@ -116,7 +117,6 @@ make clean    # clean build artifacts
 - [ ] Add undo logic
 - [ ] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
-- [ ] Handle window resizing better: debounce resize events, and make sure all UI components adjust correctly without user interaction with UI
 - [ ] When deleting a category, offer to reassign transactions to another category
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption

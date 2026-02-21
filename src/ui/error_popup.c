@@ -1,6 +1,7 @@
 #include "ui/error_popup.h"
 
 #include "ui/colors.h"
+#include "ui/resize.h"
 
 #include <string.h>
 
@@ -83,8 +84,10 @@ void ui_show_error_popup(WINDOW *parent, const char *title,
     wattroff(w, A_DIM);
 
     wrefresh(w);
-    (void)wgetch(w);
-    flushinp();
+    int ch = wgetch(w);
+    bool requeued_resize = ui_requeue_resize_event(ch);
+    if (!requeued_resize)
+        flushinp();
 
     delwin(w);
     touchwin(parent);

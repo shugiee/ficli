@@ -4,6 +4,7 @@
 #include "models/category.h"
 #include "ui/colors.h"
 #include "ui/form.h"
+#include "ui/resize.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -118,6 +119,11 @@ static bool confirm_delete_category(WINDOW *parent, const char *category_name) {
     bool done = false;
     while (!done) {
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            confirm = false;
+            done = true;
+            continue;
+        }
         switch (ch) {
         case 'y':
         case 'Y':

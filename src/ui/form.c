@@ -1,5 +1,6 @@
 #include "ui/form.h"
 #include "ui/colors.h"
+#include "ui/resize.h"
 #include "db/query.h"
 #include "models/account.h"
 #include "models/category.h"
@@ -899,6 +900,11 @@ static bool prompt_category_path(WINDOW *parent, category_type_t ctype, char *ou
         wrefresh(w);
 
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            done = true;
+            submitted = false;
+            continue;
+        }
         if (ch == 27 || ch == KEY_EXIT) {
             flushinp();
             done = true;
@@ -1038,6 +1044,11 @@ static bool confirm_apply_category_to_payee(WINDOW *parent, const char *payee,
     bool done = false;
     while (!done) {
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            done = true;
+            confirm = false;
+            continue;
+        }
         switch (ch) {
         case 'y':
         case 'Y':
@@ -1586,6 +1597,7 @@ form_result_t form_account(WINDOW *parent, sqlite3 *db, account_t *account,
             }
             break;
         case KEY_RESIZE:
+            (void)ui_requeue_resize_event(ch);
             done = true;
             break;
         default:
@@ -1872,6 +1884,7 @@ form_result_t form_category(WINDOW *parent, sqlite3 *db, category_t *category,
             }
             break;
         case KEY_RESIZE:
+            (void)ui_requeue_resize_event(ch);
             done = true;
             break;
         default:
@@ -1924,6 +1937,10 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
         fs.error[0] = '\0';
 
         if (fs.dropdown_open) {
+            if (ui_requeue_resize_event(ch)) {
+                done = true;
+                continue;
+            }
             int count = form_dropdown_count(&fs);
             if (form_dropdown_handle_filter_key(&fs, ch))
                 continue;
@@ -2083,6 +2100,7 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
             break;
 
         case KEY_RESIZE:
+            (void)ui_requeue_resize_event(ch);
             done = true;
             break;
 
@@ -2146,6 +2164,10 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
         fs.error[0] = '\0';
 
         if (fs.dropdown_open) {
+            if (ui_requeue_resize_event(ch)) {
+                done = true;
+                continue;
+            }
             int count = fs.category_count + 1;
             if (ch == KEY_UP || ch == 'k') {
                 if (fs.dropdown_sel > 0)
@@ -2205,6 +2227,7 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
             form_open_dropdown(&fs);
             break;
         case KEY_RESIZE:
+            (void)ui_requeue_resize_event(ch);
             done = true;
             break;
         default:

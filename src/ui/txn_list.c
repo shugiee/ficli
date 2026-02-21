@@ -3,6 +3,7 @@
 #include "models/account.h"
 #include "ui/colors.h"
 #include "ui/form.h"
+#include "ui/resize.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -238,6 +239,11 @@ static bool confirm_delete(WINDOW *parent) {
     bool done = false;
     while (!done) {
         int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            confirm = false;
+            done = true;
+            continue;
+        }
         switch (ch) {
         case 'y':
         case 'Y':
