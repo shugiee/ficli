@@ -271,6 +271,11 @@ static void draw_bar(WINDOW *win, int row, int col, int width,
     if (!win || !drow || width <= 0)
         return;
 
+    static const char *bar_fill = "◼";
+    const int max_bps = 15000;
+    const int warn_bps = 10000;
+    const int danger_bps = 12500;
+
     int util = drow->row.utilization_bps;
     for (int i = 0; i < width; i++)
         mvwaddch(win, row, col + i, ' ');
@@ -278,27 +283,59 @@ static void draw_bar(WINDOW *win, int row, int col, int width,
     if (util < 0)
         return;
 
-    int fill_width = width;
-    if (util <= 10000)
-        fill_width = (util * width) / 10000;
-    if (util > 0 && fill_width == 0)
-        fill_width = 1;
-    if (fill_width > width)
-        fill_width = width;
-    if (fill_width < 0)
-        fill_width = 0;
+    int clamped_util = util;
+    if (clamped_util > max_bps)
+        clamped_util = max_bps;
 
-    wattron(win, COLOR_PAIR(row_color_pair(drow)));
-    for (int i = 0; i < fill_width; i++)
-        mvwaddch(win, row, col + i, '#');
-    if (util > 10000 && fill_width > 0)
-        mvwaddch(win, row, col + fill_width - 1, '+');
-    wattroff(win, COLOR_PAIR(row_color_pair(drow)));
+    int green_bps = clamped_util < warn_bps ? clamped_util : warn_bps;
+    int yellow_bps = clamped_util < danger_bps ? clamped_util : danger_bps;
+    int red_bps = clamped_util;
 
-    wattron(win, A_DIM);
-    for (int i = fill_width; i < width; i++)
-        mvwaddch(win, row, col + i, '.');
-    wattroff(win, A_DIM);
+    int green_cols =
+        (int)(((int64_t)green_bps * width + max_bps - 1) / max_bps);
+    int yellow_cols =
+        (int)(((int64_t)yellow_bps * width + max_bps - 1) / max_bps);
+    int red_cols = (int)(((int64_t)red_bps * width + max_bps - 1) / max_bps);
+
+    if (green_bps <= 0)
+        green_cols = 0;
+    if (yellow_bps <= 0)
+        yellow_cols = 0;
+    if (red_bps <= 0)
+        red_cols = 0;
+
+    if (green_cols > width)
+        green_cols = width;
+    if (yellow_cols > width)
+        yellow_cols = width;
+    if (red_cols > width)
+        red_cols = width;
+
+    if (yellow_cols < green_cols)
+        yellow_cols = green_cols;
+    if (red_cols < yellow_cols)
+        red_cols = yellow_cols;
+
+    if (green_cols > 0) {
+        wattron(win, COLOR_PAIR(COLOR_INCOME));
+        for (int i = 0; i < green_cols; i++)
+            mvwaddstr(win, row, col + i, bar_fill);
+        wattroff(win, COLOR_PAIR(COLOR_INCOME));
+    }
+
+    if (yellow_cols > green_cols) {
+        wattron(win, COLOR_PAIR(COLOR_WARNING));
+        for (int i = green_cols; i < yellow_cols; i++)
+            mvwaddstr(win, row, col + i, bar_fill);
+        wattroff(win, COLOR_PAIR(COLOR_WARNING));
+    }
+
+    if (red_cols > yellow_cols) {
+        wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+        for (int i = yellow_cols; i < red_cols; i++)
+            mvwaddstr(win, row, col + i, bar_fill);
+        wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+    }
 }
 
 void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
@@ -339,17 +376,19 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
     int budget_w = 12;
     int net_w = 12;
     int pct_w = 7;
+    int min_cat_w = 10;
+    int min_bar_w = 10; // 150% / 10 bars = 15% per bar max
     int cat_w = avail / 3;
-    if (cat_w < 12)
-        cat_w = 12;
+    if (cat_w < min_cat_w)
+        cat_w = min_cat_w;
     if (cat_w > 28)
         cat_w = 28;
     int bar_w = avail - cat_w - budget_w - net_w - pct_w - 4;
-    if (bar_w < 8) {
-        int needed = 8 - bar_w;
+    if (bar_w < min_bar_w) {
+        int needed = min_bar_w - bar_w;
         cat_w -= needed;
-        if (cat_w < 12)
-            cat_w = 12;
+        if (cat_w < min_cat_w)
+            cat_w = min_cat_w;
         bar_w = avail - cat_w - budget_w - net_w - pct_w - 4;
     }
     if (bar_w < 0)
@@ -404,13 +443,12 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
         budget_display_row_t *drow = &ls->rows[idx];
         bool selected = (idx == ls->cursor);
 
-        mvwprintw(win, row, left, "%-*s", avail, "");
-
         if (selected) {
             if (!focused)
                 wattron(win, A_DIM);
             wattron(win, A_REVERSE);
         }
+        mvwprintw(win, row, left, "%-*s", avail, "");
 
         char category[80];
         if (drow->is_parent)
@@ -435,18 +473,12 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
             wattroff(win, A_DIM);
         }
 
+        int64_t net_abs_cents = drow->row.net_spent_cents;
+        if (net_abs_cents < 0)
+            net_abs_cents = -net_abs_cents;
         char net_str[24];
-        format_cents_plain(drow->row.net_spent_cents, true, net_str,
-                           sizeof(net_str));
-        if (drow->row.net_spent_cents > 0)
-            wattron(win, COLOR_PAIR(COLOR_EXPENSE));
-        else if (drow->row.net_spent_cents < 0)
-            wattron(win, COLOR_PAIR(COLOR_INCOME));
+        format_cents_plain(net_abs_cents, false, net_str, sizeof(net_str));
         mvwprintw(win, row, net_col, "%*.*s", net_w, net_w, net_str);
-        if (drow->row.net_spent_cents > 0)
-            wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
-        else if (drow->row.net_spent_cents < 0)
-            wattroff(win, COLOR_PAIR(COLOR_INCOME));
 
         if (drow->row.utilization_bps >= 0) {
             int util = drow->row.utilization_bps;

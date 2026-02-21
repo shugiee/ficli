@@ -33,6 +33,11 @@ struct category_list_state {
     bool changed;
 };
 
+typedef struct {
+    int64_t id;
+    char name[64];
+} delete_reassign_option_t;
+
 static void trim_whitespace_in_place(char *s) {
     if (!s)
         return;
@@ -142,6 +147,160 @@ static bool confirm_delete_category(WINDOW *parent, const char *category_name) {
     delwin(w);
     touchwin(parent);
     return confirm;
+}
+
+static int choose_delete_reassignment(WINDOW *parent, sqlite3 *db,
+                                      const category_t *category, int txn_count,
+                                      int64_t *out_category_id,
+                                      char *out_category_name,
+                                      size_t out_category_name_sz) {
+    if (!parent || !db || !category || !out_category_id)
+        return -1;
+
+    category_t *same_type = NULL;
+    int same_type_count = db_get_categories(db, category->type, &same_type);
+    if (same_type_count < 0)
+        return -1;
+
+    int option_count = 1;
+    for (int i = 0; i < same_type_count; i++) {
+        if (same_type[i].id != category->id)
+            option_count++;
+    }
+
+    delete_reassign_option_t *options =
+        calloc((size_t)option_count, sizeof(*options));
+    if (!options) {
+        free(same_type);
+        return -1;
+    }
+
+    int idx = 0;
+    options[idx].id = 0;
+    snprintf(options[idx].name, sizeof(options[idx].name), "Uncategorized");
+    idx++;
+    for (int i = 0; i < same_type_count; i++) {
+        if (same_type[i].id == category->id)
+            continue;
+        options[idx].id = same_type[i].id;
+        snprintf(options[idx].name, sizeof(options[idx].name), "%s",
+                 same_type[i].name);
+        idx++;
+    }
+    free(same_type);
+
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+
+    int visible = option_count < 6 ? option_count : 6;
+    int win_h = 8 + visible;
+    int win_w = 68;
+    if (ph < win_h)
+        win_h = ph;
+    if (pw < win_w)
+        win_w = pw;
+    if (win_h < 10 || win_w < 38) {
+        free(options);
+        return 0;
+    }
+
+    int py, px;
+    getbegyx(parent, py, px);
+    int win_y = py + (ph - win_h) / 2;
+    int win_x = px + (pw - win_w) / 2;
+
+    WINDOW *w = newwin(win_h, win_w, win_y, win_x);
+    if (!w) {
+        free(options);
+        return -1;
+    }
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+
+    int sel = 0;
+    int scroll = 0;
+    int done = 0;
+    int result = 0;
+
+    while (!done) {
+        werase(w);
+        box(w, 0, 0);
+
+        mvwprintw(w, 1, 2, "Delete '%-.30s' with %d linked transaction%s",
+                  category->name, txn_count, txn_count == 1 ? "" : "s");
+        mvwprintw(w, 2, 2, "Reassign linked transactions to:");
+
+        if (sel < scroll)
+            scroll = sel;
+        if (sel >= scroll + visible)
+            scroll = sel - visible + 1;
+        if (scroll < 0)
+            scroll = 0;
+
+        int list_row = 4;
+        int list_w = win_w - 4;
+        if (list_w < 1)
+            list_w = 1;
+        for (int i = 0; i < visible; i++) {
+            int opt_idx = scroll + i;
+            if (opt_idx >= option_count)
+                break;
+
+            bool selected = (opt_idx == sel);
+            if (selected)
+                wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+            mvwprintw(w, list_row + i, 2, "%-*s", list_w, "");
+            mvwprintw(w, list_row + i, 2, "%.*s", list_w, options[opt_idx].name);
+            if (selected)
+                wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
+        }
+        if (scroll > 0)
+            mvwaddch(w, list_row, win_w - 2, ACS_UARROW);
+        if (scroll + visible < option_count)
+            mvwaddch(w, list_row + visible - 1, win_w - 2, ACS_DARROW);
+
+        mvwprintw(w, win_h - 2, 2, "Enter:Delete  Esc:Cancel  \u2191\u2193 choose");
+        wrefresh(w);
+
+        int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            result = 0;
+            done = 1;
+            continue;
+        }
+        switch (ch) {
+        case KEY_UP:
+        case 'k':
+            if (sel > 0)
+                sel--;
+            break;
+        case KEY_DOWN:
+        case 'j':
+            if (sel < option_count - 1)
+                sel++;
+            break;
+        case '\n':
+            *out_category_id = options[sel].id;
+            if (out_category_name && out_category_name_sz > 0) {
+                snprintf(out_category_name, out_category_name_sz, "%s",
+                         options[sel].name);
+            }
+            result = 1;
+            done = 1;
+            break;
+        case 27:
+            result = 0;
+            done = 1;
+            break;
+        default:
+            break;
+        }
+    }
+
+    delwin(w);
+    free(options);
+    touchwin(parent);
+    return result;
 }
 
 static void reload(category_list_state_t *ls) {
@@ -610,34 +769,54 @@ bool category_list_handle_input(category_list_state_t *ls, WINDOW *parent, int c
                          child_count == 1 ? "y" : "ies");
                 return true;
             }
-            if (txn_count > 0) {
-                snprintf(ls->message, sizeof(ls->message),
-                         "Cannot delete: %d transaction%s linked", txn_count,
-                         txn_count == 1 ? "" : "s");
-                return true;
-            }
 
-            if (!confirm_delete_category(parent, category.name)) {
+            int64_t replacement_category_id = 0;
+            char replacement_category_name[64];
+            snprintf(replacement_category_name, sizeof(replacement_category_name),
+                     "Uncategorized");
+
+            if (txn_count > 0) {
+                int choose_rc = choose_delete_reassignment(
+                    parent, ls->db, &category, txn_count, &replacement_category_id,
+                    replacement_category_name, sizeof(replacement_category_name));
+                if (choose_rc < 0) {
+                    snprintf(ls->message, sizeof(ls->message),
+                             "Error loading category choices");
+                    return true;
+                }
+                if (choose_rc == 0) {
+                    snprintf(ls->message, sizeof(ls->message), "Delete cancelled");
+                    return true;
+                }
+            } else if (!confirm_delete_category(parent, category.name)) {
                 snprintf(ls->message, sizeof(ls->message), "Delete cancelled");
                 return true;
             }
 
-            int rc = db_delete_category(ls->db, category.id);
+            int rc = db_delete_category_with_reassignment(ls->db, category.id,
+                                                          replacement_category_id);
             if (rc == 0) {
                 ls->dirty = true;
                 ls->changed = true;
-                snprintf(ls->message, sizeof(ls->message), "Deleted: %.70s",
-                         category.name);
+                if (txn_count > 0) {
+                    snprintf(ls->message, sizeof(ls->message),
+                             "Deleted: %.22s (%d txn%s -> %.40s)", category.name,
+                             txn_count, txn_count == 1 ? "" : "s",
+                             replacement_category_name);
+                } else {
+                    snprintf(ls->message, sizeof(ls->message), "Deleted: %.70s",
+                             category.name);
+                }
             } else if (rc == -4) {
                 snprintf(ls->message, sizeof(ls->message),
                          "Cannot delete: has sub-categories");
-            } else if (rc == -3) {
-                snprintf(ls->message, sizeof(ls->message),
-                         "Cannot delete: has transactions");
             } else if (rc == -2) {
                 snprintf(ls->message, sizeof(ls->message), "Category not found");
                 ls->dirty = true;
                 ls->changed = true;
+            } else if (rc == -5) {
+                snprintf(ls->message, sizeof(ls->message),
+                         "Invalid replacement category");
             } else {
                 snprintf(ls->message, sizeof(ls->message), "Error deleting category");
             }

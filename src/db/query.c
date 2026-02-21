@@ -666,6 +666,150 @@ int db_count_child_categories(sqlite3 *db, int64_t category_id) {
     return count;
 }
 
+static int db_get_category_type_name(sqlite3 *db, int64_t category_id,
+                                     char out[8]) {
+    if (!out || category_id <= 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, "SELECT type FROM categories WHERE id = ?",
+                                -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_category_type_name prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        const char *type_name = (const char *)sqlite3_column_text(stmt, 0);
+        if (!type_name || type_name[0] == '\0') {
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+        snprintf(out, 8, "%s", type_name);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return -2;
+
+    fprintf(stderr, "db_get_category_type_name step: %s\n", sqlite3_errmsg(db));
+    return -1;
+}
+
+int db_delete_category_with_reassignment(sqlite3 *db, int64_t category_id,
+                                         int64_t replacement_category_id) {
+    if (category_id <= 0)
+        return -1;
+    if (replacement_category_id == category_id)
+        return -5;
+
+    char source_type[8];
+    int type_rc = db_get_category_type_name(db, category_id, source_type);
+    if (type_rc == -2)
+        return -2;
+    if (type_rc < 0)
+        return -1;
+
+    int child_count = db_count_child_categories(db, category_id);
+    if (child_count < 0)
+        return -1;
+    if (child_count > 0)
+        return -4;
+
+    if (replacement_category_id > 0) {
+        char replacement_type[8];
+        type_rc = db_get_category_type_name(db, replacement_category_id,
+                                            replacement_type);
+        if (type_rc == -2)
+            return -5;
+        if (type_rc < 0)
+            return -1;
+        if (strcmp(source_type, replacement_type) != 0)
+            return -5;
+    }
+
+    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_category_with_reassignment begin: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    if (replacement_category_id > 0) {
+        rc = sqlite3_prepare_v2(
+            db, "UPDATE transactions SET category_id = ? WHERE category_id = ?",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr,
+                    "db_delete_category_with_reassignment prepare reassign: %s\n",
+                    sqlite3_errmsg(db));
+            goto rollback;
+        }
+        sqlite3_bind_int64(stmt, 1, replacement_category_id);
+        sqlite3_bind_int64(stmt, 2, category_id);
+    } else {
+        rc = sqlite3_prepare_v2(
+            db, "UPDATE transactions SET category_id = NULL WHERE category_id = ?",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr,
+                    "db_delete_category_with_reassignment prepare clear: %s\n",
+                    sqlite3_errmsg(db));
+            goto rollback;
+        }
+        sqlite3_bind_int64(stmt, 1, category_id);
+    }
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_delete_category_with_reassignment step update: %s\n",
+                sqlite3_errmsg(db));
+        goto rollback;
+    }
+
+    rc = sqlite3_prepare_v2(db, "DELETE FROM categories WHERE id = ?", -1, &stmt,
+                            NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_category_with_reassignment prepare delete: %s\n",
+                sqlite3_errmsg(db));
+        goto rollback;
+    }
+    sqlite3_bind_int64(stmt, 1, category_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_delete_category_with_reassignment step delete: %s\n",
+                sqlite3_errmsg(db));
+        goto rollback;
+    }
+
+    if (sqlite3_changes(db) == 0) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -2;
+    }
+
+    rc = sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_delete_category_with_reassignment commit: %s\n",
+                sqlite3_errmsg(db));
+        goto rollback;
+    }
+
+    return 0;
+
+rollback:
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    return -1;
+}
+
 int db_delete_category(sqlite3 *db, int64_t category_id) {
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM categories WHERE id = ?", -1,

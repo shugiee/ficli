@@ -42,6 +42,13 @@ int db_count_child_categories(sqlite3 *db, int64_t category_id);
 // transactions, -2 not found, -1 error.
 int db_delete_category(sqlite3 *db, int64_t category_id);
 
+// Delete category and optionally reassign related transactions in one
+// transaction. replacement_category_id <= 0 leaves them uncategorized.
+// Returns 0 success, -5 invalid replacement category, -4 has child categories,
+// -2 not found, -1 error.
+int db_delete_category_with_reassignment(sqlite3 *db, int64_t category_id,
+                                         int64_t replacement_category_id);
+
 // Insert a transaction. Returns new row id, -1 on error.
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn);
 

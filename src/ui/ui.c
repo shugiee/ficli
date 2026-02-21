@@ -104,7 +104,7 @@ static const help_row_t help_rows[] = {
     {NULL, "Categories"},
     {"Enter", "Show add category form"},
     {"e", "Edit selected category"},
-    {"d", "Delete selected category"},
+    {"d", "Delete selected category (can reassign transactions)"},
     {"\u2190 / \u2192", "Change type"},
 
     {"", ""},
