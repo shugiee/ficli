@@ -82,6 +82,7 @@ struct txn_list_state {
 
     int cursor;
     int scroll_offset;
+    int next_reload_cursor;
     bool dirty;
 };
 
@@ -674,7 +675,7 @@ static void reload(txn_list_state_t *ls) {
     free(ls->balance_series);
     ls->balance_series = NULL;
     ls->balance_series_count = 0;
-    ls->cursor = 0;
+    ls->cursor = (ls->next_reload_cursor >= 0) ? ls->next_reload_cursor : 0;
     ls->scroll_offset = 0;
     txn_list_clear_selected(ls);
 
@@ -723,6 +724,7 @@ static void reload(txn_list_state_t *ls) {
 
     ls->dirty = false;
     rebuild_display(ls);
+    ls->next_reload_cursor = -1;
 }
 
 txn_list_state_t *txn_list_create(sqlite3 *db) {
@@ -732,6 +734,7 @@ txn_list_state_t *txn_list_create(sqlite3 *db) {
     ls->db = db;
     ls->sort_col = SORT_DATE;
     ls->sort_asc = false;
+    ls->next_reload_cursor = -1;
     ls->dirty = true;
     return ls;
 }
@@ -1232,13 +1235,14 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
         if (ls->display_count <= 0)
             return true;
         if (confirm_delete(parent)) {
+            int delete_idx = ls->cursor;
             int rc =
                 db_delete_transaction(ls->db, (int)ls->display[ls->cursor].id);
             if (rc == 0) {
-                if (ls->cursor > 0)
-                    ls->cursor--;
+                ls->next_reload_cursor = delete_idx;
                 ls->dirty = true;
             } else if (rc == -2) {
+                ls->next_reload_cursor = delete_idx;
                 ls->dirty = true;
             }
         }
