@@ -98,12 +98,12 @@ make clean    # clean build artifacts
 - [x] Allow bulk editing transactions (e.g., for categorization), maybe by selecting multiple transactions with spacebar and then hitting `e` to edit all selected transactions
 - [x] Allow adding, editing, and deleting Categories in categories UI
 - [x] Use ctrl-d and ctrl-u for half-page down/up in transaction list
-- [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
 - [x] Show chart of account balance over time ([plan](../.claude/plans/account-balance-chart.md))
-- [ ] Fix error UI when adding an account with a name conflict
+- [ ] Add generic error popup that's centered, near the top of the UI. Use it to show error when account is added with naming conflict.
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow user to type to filter dropdowns
+- [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
 - [ ] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [ ] Budget tracking
 - [ ] Allow archiving accounts
