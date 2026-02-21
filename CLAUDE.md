@@ -102,9 +102,9 @@ make clean    # clean build artifacts
 - [x] Add generic error popup that's centered, near the top of the UI. Use it to show error when account is added with naming conflict. ([plan](../.claude/plans/shared-error-popup-account-name-conflict.md))
 - [x] Add popout for keyboard shortcuts reference
 - [x] Support auto-categorization ([plan](../.claude/plans/auto-categorization-import-payee.md))
+- [x] Allow user to type to filter dropdowns ([plan](../.claude/plans/dropdown-type-filter.md))
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
-- [ ] Allow user to type to filter dropdowns
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
 - [ ] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [ ] Budget tracking

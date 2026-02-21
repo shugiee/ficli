@@ -43,6 +43,8 @@ typedef struct {
     bool dropdown_open;
     int dropdown_sel;
     int dropdown_scroll;
+    char dropdown_filter[64];
+    int dropdown_filter_len;
 
     // Type toggle
     transaction_type_t txn_type;
@@ -132,6 +134,120 @@ static bool field_is_text_entry(const form_state_t *fs, int field) {
     if (field == FIELD_PAYEE)
         return !field_hidden(fs, FIELD_PAYEE);
     return false;
+}
+
+static bool contains_case_insensitive(const char *haystack,
+                                      const char *needle) {
+    if (!haystack || !needle)
+        return false;
+    if (needle[0] == '\0')
+        return true;
+
+    size_t hlen = strlen(haystack);
+    size_t nlen = strlen(needle);
+    if (nlen > hlen)
+        return false;
+
+    for (size_t i = 0; i + nlen <= hlen; i++) {
+        size_t j = 0;
+        while (j < nlen) {
+            unsigned char hc = (unsigned char)haystack[i + j];
+            unsigned char nc = (unsigned char)needle[j];
+            if (tolower(hc) != tolower(nc))
+                break;
+            j++;
+        }
+        if (j == nlen)
+            return true;
+    }
+    return false;
+}
+
+static int form_dropdown_count(const form_state_t *fs) {
+    if (fs->current_field == FIELD_ACCOUNT)
+        return fs->account_count;
+    if (fs->current_field == FIELD_CATEGORY) {
+        if (fs->txn_type == TRANSACTION_TRANSFER)
+            return fs->account_count;
+        return fs->category_count + 1;
+    }
+    return 0;
+}
+
+static const char *form_dropdown_item_name(const form_state_t *fs, int idx) {
+    if (fs->current_field == FIELD_ACCOUNT)
+        return fs->accounts[idx].name;
+    if (fs->txn_type == TRANSACTION_TRANSFER)
+        return fs->accounts[idx].name;
+    if (idx == fs->category_count)
+        return "<Add category>";
+    return fs->categories[idx].name;
+}
+
+static void form_reset_dropdown_filter(form_state_t *fs) {
+    fs->dropdown_filter_len = 0;
+    fs->dropdown_filter[0] = '\0';
+}
+
+static bool form_dropdown_find_match(const form_state_t *fs, const char *query,
+                                     int *out_idx) {
+    if (!out_idx || !query || query[0] == '\0')
+        return false;
+
+    int count = form_dropdown_count(fs);
+    for (int i = 0; i < count; i++) {
+        if (contains_case_insensitive(form_dropdown_item_name(fs, i), query)) {
+            *out_idx = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool form_dropdown_handle_filter_key(form_state_t *fs, int ch) {
+    if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        if (fs->dropdown_filter_len > 0) {
+            fs->dropdown_filter_len--;
+            fs->dropdown_filter[fs->dropdown_filter_len] = '\0';
+            if (fs->dropdown_filter_len > 0) {
+                int idx = fs->dropdown_sel;
+                if (form_dropdown_find_match(fs, fs->dropdown_filter, &idx))
+                    fs->dropdown_sel = idx;
+            }
+        }
+        return true;
+    }
+
+    if (!isprint((unsigned char)ch))
+        return false;
+
+    if (fs->dropdown_filter_len >= (int)sizeof(fs->dropdown_filter) - 1)
+        return true;
+
+    char candidate[sizeof(fs->dropdown_filter)];
+    memcpy(candidate, fs->dropdown_filter, (size_t)fs->dropdown_filter_len);
+    candidate[fs->dropdown_filter_len] = (char)ch;
+    candidate[fs->dropdown_filter_len + 1] = '\0';
+
+    int idx = fs->dropdown_sel;
+    if (form_dropdown_find_match(fs, candidate, &idx)) {
+        fs->dropdown_filter_len++;
+        fs->dropdown_filter[fs->dropdown_filter_len - 1] = (char)ch;
+        fs->dropdown_filter[fs->dropdown_filter_len] = '\0';
+        fs->dropdown_sel = idx;
+        return true;
+    }
+
+    candidate[0] = (char)ch;
+    candidate[1] = '\0';
+    idx = fs->dropdown_sel;
+    if (form_dropdown_find_match(fs, candidate, &idx)) {
+        fs->dropdown_filter_len = 1;
+        fs->dropdown_filter[0] = (char)ch;
+        fs->dropdown_filter[1] = '\0';
+        fs->dropdown_sel = idx;
+    }
+    return true;
 }
 
 static void form_load_categories(form_state_t *fs) {
@@ -419,15 +535,7 @@ static void form_draw_dropdown(form_state_t *fs) {
             wattron(w, COLOR_PAIR(COLOR_FORM_DROPDOWN));
         }
 
-        const char *name;
-        if (fs->current_field == FIELD_ACCOUNT)
-            name = fs->accounts[idx].name;
-        else if (fs->txn_type == TRANSACTION_TRANSFER)
-            name = fs->accounts[idx].name;
-        else if (idx == fs->category_count)
-            name = "<Add category>";
-        else
-            name = fs->categories[idx].name;
+        const char *name = form_dropdown_item_name(fs, idx);
 
         mvwprintw(w, base_row + i, FIELD_COL, "%-*s", FIELD_WIDTH, name);
 
@@ -472,6 +580,7 @@ static void form_open_dropdown(form_state_t *fs) {
     fs->dropdown_open = true;
     fs->dropdown_sel = sel;
     fs->dropdown_scroll = 0;
+    form_reset_dropdown_filter(fs);
     // Ensure selected item is visible
     int visible = count < MAX_DROP ? count : MAX_DROP;
     if (sel >= visible)
@@ -497,6 +606,7 @@ static void form_close_dropdown(form_state_t *fs, bool accept) {
     }
     fs->dropdown_open = false;
     fs->dropdown_scroll = 0;
+    form_reset_dropdown_filter(fs);
 }
 
 static void maybe_propagate_category_to_payee(WINDOW *parent, form_state_t *fs);
@@ -1814,15 +1924,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
         fs.error[0] = '\0';
 
         if (fs.dropdown_open) {
-            int count = 0;
-            if (fs.current_field == FIELD_ACCOUNT) {
-                count = fs.account_count;
-            } else if (fs.current_field == FIELD_CATEGORY &&
-                       fs.txn_type == TRANSACTION_TRANSFER) {
-                count = fs.account_count;
-            } else {
-                count = fs.category_count + 1;
-            }
+            int count = form_dropdown_count(&fs);
+            if (form_dropdown_handle_filter_key(&fs, ch))
+                continue;
             switch (ch) {
             case KEY_UP:
                 if (fs.dropdown_sel > 0)
@@ -2043,18 +2147,17 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
 
         if (fs.dropdown_open) {
             int count = fs.category_count + 1;
-            switch (ch) {
-            case KEY_UP:
-            case 'k':
+            if (ch == KEY_UP || ch == 'k') {
                 if (fs.dropdown_sel > 0)
                     fs.dropdown_sel--;
-                break;
-            case KEY_DOWN:
-            case 'j':
+                continue;
+            }
+            if (ch == KEY_DOWN || ch == 'j') {
                 if (fs.dropdown_sel < count - 1)
                     fs.dropdown_sel++;
-                break;
-            case '\n':
+                continue;
+            }
+            if (ch == '\n') {
                 if (fs.dropdown_sel == fs.category_count) {
                     form_close_dropdown(&fs, false);
                     if (form_create_category_on_the_fly(parent, &fs)) {
@@ -2072,12 +2175,14 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
                         done = true;
                     }
                 }
-                break;
-            case 27:
-            case KEY_EXIT:
-                done = true;
-                break;
+                continue;
             }
+            if (ch == 27 || ch == KEY_EXIT) {
+                done = true;
+                continue;
+            }
+            if (form_dropdown_handle_filter_key(&fs, ch))
+                continue;
             continue;
         }
 
