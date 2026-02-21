@@ -116,18 +116,18 @@ make clean    # clean build artifacts
 - [x] Support auto-categorization ([plan](../.claude/plans/auto-categorization-import-payee.md))
 - [x] Allow user to type to filter dropdowns ([plan](../.claude/plans/dropdown-type-filter.md))
 - [x] Handle window resizing better: debounce resize events, and make sure all UI components adjust correctly without user interaction with UI ([plan](../.claude/plans/window-resize-debounce.md))
+- [x] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
+- [x] Automatically enter inverse transaction for transfers
+- [ ] Budget tracking
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
-- [x] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
-- [ ] Budget tracking
 - [ ] Allow archiving accounts
 - [ ] Support CSV imports for investment accounts
 - [ ] Data export (CSV)
 - [ ] Support split transactions
 - [ ] Add row indices to transaction list
 - [ ] Add undo logic
-- [x] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
 - [ ] When deleting a category, offer to reassign transactions to another category
 - [ ] Add reconciliation
