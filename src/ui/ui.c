@@ -18,10 +18,10 @@
 
 #define SIDEBAR_WIDTH 18
 
-
-static const char *menu_labels[SCREEN_COUNT] = {"Dashboard",  "Transactions",
-                                                "Categories", "Budgets",
-                                                "Reports",    "Accounts"};
+// Keep in sync with screen_t enum in ui.h
+static const char *menu_labels[SCREEN_COUNT] = {
+    "Dashboard", "Transactions", "Accounts", "Categories", "Budgets", "Reports",
+};
 
 static struct {
     WINDOW *header;
@@ -213,42 +213,42 @@ static void ui_apply_theme(bool dark_mode) {
 #define HEX_NC(v) ((v) * 1000 / 255)
     if (dark_mode) {
         // Everforest Dark (Medium)
-        init_color(CUST_BG,     HEX_NC(0x2d), HEX_NC(0x35), HEX_NC(0x3b));
-        init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
-        init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
+        init_color(CUST_BG, HEX_NC(0x2d), HEX_NC(0x35), HEX_NC(0x3b));
+        init_color(CUST_RED, HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
+        init_color(CUST_GREEN, HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
         init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
-        init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
+        init_color(CUST_BLUE, HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
         init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
-        init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
-        init_color(CUST_FG,     HEX_NC(0xd3), HEX_NC(0xc6), HEX_NC(0xaa));
+        init_color(CUST_AQUA, HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
+        init_color(CUST_FG, HEX_NC(0xd3), HEX_NC(0xc6), HEX_NC(0xaa));
         // Slightly lighter than dark background for layered dropdowns
         init_color(CUST_SURFACE, HEX_NC(0x37), HEX_NC(0x40), HEX_NC(0x46));
     } else {
         // Everforest Light (Medium)
-        init_color(CUST_BG,     HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
-        init_color(CUST_RED,    HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
-        init_color(CUST_GREEN,  HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
+        init_color(CUST_BG, HEX_NC(0xfd), HEX_NC(0xf6), HEX_NC(0xe3));
+        init_color(CUST_RED, HEX_NC(0xe6), HEX_NC(0x7e), HEX_NC(0x80));
+        init_color(CUST_GREEN, HEX_NC(0xa7), HEX_NC(0xc0), HEX_NC(0x80));
         init_color(CUST_YELLOW, HEX_NC(0xdb), HEX_NC(0xbc), HEX_NC(0x7f));
-        init_color(CUST_BLUE,   HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
+        init_color(CUST_BLUE, HEX_NC(0x7f), HEX_NC(0xbb), HEX_NC(0xb3));
         init_color(CUST_PURPLE, HEX_NC(0xd6), HEX_NC(0x99), HEX_NC(0xb6));
-        init_color(CUST_AQUA,   HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
-        init_color(CUST_FG,     HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
+        init_color(CUST_AQUA, HEX_NC(0x83), HEX_NC(0xc0), HEX_NC(0x92));
+        init_color(CUST_FG, HEX_NC(0x5c), HEX_NC(0x6a), HEX_NC(0x72));
         // Slightly darker than light background for layered dropdowns
         init_color(CUST_SURFACE, HEX_NC(0xf3), HEX_NC(0xec), HEX_NC(0xd9));
     }
 #undef HEX_NC
 
-    init_pair(COLOR_NORMAL,      CUST_FG,    CUST_BG);
-    init_pair(COLOR_HEADER,      CUST_BG,    CUST_BLUE);
-    init_pair(COLOR_SELECTED,    CUST_BG,    CUST_FG);
-    init_pair(COLOR_STATUS,      CUST_BG,    CUST_BLUE);
-    init_pair(COLOR_FORM,        CUST_BG,    CUST_FG);
-    init_pair(COLOR_FORM_ACTIVE, CUST_BG,    CUST_AQUA);
-    init_pair(COLOR_EXPENSE,     CUST_RED,   CUST_BG);
-    init_pair(COLOR_INCOME,      CUST_GREEN, CUST_BG);
-    init_pair(COLOR_INFO,        CUST_AQUA,  CUST_BG);
-    init_pair(COLOR_FORM_DROPDOWN, CUST_FG,  CUST_SURFACE);
-    init_pair(COLOR_ERROR,       CUST_RED,   CUST_BG);
+    init_pair(COLOR_NORMAL, CUST_FG, CUST_BG);
+    init_pair(COLOR_HEADER, CUST_BG, CUST_BLUE);
+    init_pair(COLOR_SELECTED, CUST_BG, CUST_FG);
+    init_pair(COLOR_STATUS, CUST_BG, CUST_BLUE);
+    init_pair(COLOR_FORM, CUST_BG, CUST_FG);
+    init_pair(COLOR_FORM_ACTIVE, CUST_BG, CUST_AQUA);
+    init_pair(COLOR_EXPENSE, CUST_RED, CUST_BG);
+    init_pair(COLOR_INCOME, CUST_GREEN, CUST_BG);
+    init_pair(COLOR_INFO, CUST_AQUA, CUST_BG);
+    init_pair(COLOR_FORM_DROPDOWN, CUST_FG, CUST_SURFACE);
+    init_pair(COLOR_ERROR, CUST_RED, CUST_BG);
 }
 
 static void ui_create_layout(void) {
@@ -479,7 +479,8 @@ static void ui_handle_input(int ch) {
                 return;
         }
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
-            if (account_list_handle_input(state.account_list, state.content, ch)) {
+            if (account_list_handle_input(state.account_list, state.content,
+                                          ch)) {
                 if (account_list_consume_changed(state.account_list) &&
                     state.txn_list) {
                     txn_list_mark_dirty(state.txn_list);
@@ -544,7 +545,8 @@ static void ui_handle_input(int ch) {
         break;
     case 'i': {
         int64_t acct_id = state.txn_list
-            ? txn_list_get_current_account_id(state.txn_list) : 0;
+                              ? txn_list_get_current_account_id(state.txn_list)
+                              : 0;
         int n = import_dialog(state.content, state.db, acct_id);
         if (n > 0 && state.txn_list)
             txn_list_mark_dirty(state.txn_list);
