@@ -3,11 +3,11 @@
 > **Start here:** Read [CODEBASE.md](CODEBASE.md) for a detailed map of every file, struct, color pair, and architectural pattern. It saves significant exploration time.
 
 ## Project Overview
-A terminal-based personal finance application for tracking expenses and income. Built as a learning project in C with an ncurses UI.
+A terminal-based personal finance app for tracking expenses, income, and transfers. Built in C with an ncurses UI and SQLite persistence.
 
 ## Tech Stack
 - **Language:** C (C23 standard)
-- **UI:** ncurses
+- **UI:** ncursesw
 - **Build:** Make
 - **Storage:** SQLite (single local file)
 - **Platform:** Linux
@@ -19,28 +19,36 @@ A terminal-based personal finance application for tracking expenses and income. 
 - SQLite for persistent storage (simple, zero-config, single-file)
 - ncurses for interactive terminal UI with keyboard-driven navigation
 
-## Core Features (Planned)
-- Add/edit/delete transactions (expenses and income)
-- Categorize transactions
-- View transaction history with filtering (by date, category, type)
-- Monthly/yearly summaries
-- Budget tracking per category
+## Core Features (Current)
+- Transaction CRUD for expense, income, and transfer entries
+- Per-account transaction list with sort/filter/search and keyboard-first navigation
+- Bulk transaction selection/edit plus quick category edit shortcut (`c`)
+- Payee-aware auto-categorization prompts for uncategorized matches
+- Account management UI (add/edit/delete) with account types and credit-card last4
+- Category management UI (add/edit/delete), including parent/child categories (`Parent:Child`)
+- CSV import flows for credit card and checking/savings statements with deduplication
+- Account summaries and 90-day balance chart in Transactions view
+- Theme toggle (`t`) with persisted preference
+- Resize-aware layout handling and in-app keyboard shortcut reference (`?`)
 
-## Project Structure
+## Project Structure (High-level)
+`CODEBASE.md` is the canonical file-by-file map. Keep this section concise for orientation.
+
 ```
 ficli/
   src/
-    main.c          # Entry point, ncurses init
-    ui/             # UI components (windows, forms, menus)
-    db/             # SQLite database layer (schema, seeding)
+    main.c              # Entry point + DB path bootstrap
+    db/                 # Schema init/migrations + query layer
+    ui/                 # Main loop, screen modules, forms, popups
+    csv/                # CSV parse + import workflows
   include/
-    db/db.h         # Database public API
-    ui/ui.h         # UI public API
-    models/         # Data structures
-      account.h     # account_t
-      budget.h      # budget_t
-      category.h    # category_t, category_type_t
-      transaction.h # transaction_t, transaction_type_t
+    db/                 # DB APIs (`db.h`, `query.h`)
+    ui/                 # UI APIs (`ui.h`, list modules, forms, dialogs, colors)
+    csv/                # CSV parse/import API
+    models/             # account/category/transaction/budget structs/enums
+  build/                # Build artifacts
+  ficli_seed.sql        # Optional seed restore file
+  CODEBASE.md           # Detailed architecture and file map
   Makefile
   CLAUDE.md
 ```
@@ -52,10 +60,12 @@ ficli/
 - Keep functions short and focused
 - Free all allocated memory; no leaks
 - When completing a Status item, ALWAYS link to its plan document (e.g., `([plan](../.claude/plans/name.md))`)
+- This is in early stage development, with fully malleable data in the DB. Feel free to run SQL queries directly as we change the schema.
 
 ## Build & Run
 ```
 make          # build
+make run      # build + run
 make clean    # clean build artifacts
 ./ficli       # run
 ```
@@ -67,7 +77,8 @@ make clean    # clean build artifacts
 - **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories
-- **Seed backup file** flicli_seed.sql. To use it: `sqlite3 ~/.local/share/ficli/ficli.db < ficli_seed.sql`
+- **Theme config:** `~/.config/ficli/config.ini` (`theme=dark|light`)
+- **Seed backup file:** `ficli_seed.sql` (repo root). To use it: `sqlite3 ~/.local/share/ficli/ficli.db < ficli_seed.sql`
 
 ## Status
 - [x] Project scaffolding and build system
@@ -108,7 +119,7 @@ make clean    # clean build artifacts
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
-- [ ] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
+- [x] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [ ] Budget tracking
 - [ ] Allow archiving accounts
 - [ ] Support CSV imports for investment accounts
@@ -116,7 +127,7 @@ make clean    # clean build artifacts
 - [ ] Support split transactions
 - [ ] Add row indices to transaction list
 - [ ] Add undo logic
-- [ ] Automatically enter inverse transaction for transfers
+- [x] Automatically enter inverse transaction for transfers
 - [ ] Add investment purchases/sales with cost basis tracking
 - [ ] When deleting a category, offer to reassign transactions to another category
 - [ ] Add reconciliation
