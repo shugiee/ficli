@@ -26,6 +26,7 @@ A terminal-based personal finance app for tracking expenses, income, and transfe
 - Payee-aware auto-categorization prompts for uncategorized matches
 - Account management UI (add/edit/delete) with account types and credit-card last4
 - Category management UI (add/edit/delete), including parent/child categories (`Parent:Child`)
+- Budget tracking UI with parent-category rollups, child spend detail, month navigation, and effective-month budget rules
 - CSV import flows for credit card and checking/savings statements with deduplication
 - Account summaries and 90-day balance chart in Transactions view
 - Theme toggle (`t`) with persisted preference
@@ -118,7 +119,7 @@ make clean    # clean build artifacts
 - [x] Handle window resizing better: debounce resize events, and make sure all UI components adjust correctly without user interaction with UI ([plan](../.claude/plans/window-resize-debounce.md))
 - [x] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [x] Automatically enter inverse transaction for transfers
-- [ ] Budget tracking
+- [x] Budget tracking ([plan](../.claude/plans/budget-tracking-v1.md))
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout

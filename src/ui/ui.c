@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 #include "ui/account_list.h"
+#include "ui/budget_list.h"
 #include "ui/category_list.h"
 #include "ui/colors.h"
 #include "ui/form.h"
@@ -45,6 +46,7 @@ static struct {
     txn_list_state_t *txn_list;
     account_list_state_t *account_list;
     category_list_state_t *category_list;
+    budget_list_state_t *budget_list;
     bool dark_mode;
 } state;
 
@@ -111,6 +113,14 @@ static const help_row_t help_rows[] = {
     {"e", "Edit selected account"},
     {"d", "Delete selected account"},
     {"\u2190 / \u2192", "Change type"},
+
+    {"", ""},
+    {NULL, "Budgets"},
+    {"h / \u2190", "Previous month"},
+    {"l / \u2192", "Next month"},
+    {"r", "Jump to current month"},
+    {"e / Enter", "Edit selected parent budget"},
+    {"Esc", "Cancel inline edit"},
 };
 
 #define HELP_ROW_COUNT ((int)(sizeof(help_rows) / sizeof(help_rows[0])))
@@ -258,6 +268,7 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_INFO, CUST_AQUA, CUST_BG);
     init_pair(COLOR_FORM_DROPDOWN, CUST_FG, CUST_SURFACE);
     init_pair(COLOR_ERROR, CUST_RED, CUST_BG);
+    init_pair(COLOR_WARNING, CUST_YELLOW, CUST_BG);
 }
 
 static void ui_create_layout(void) {
@@ -360,6 +371,12 @@ static void ui_draw_content(void) {
         if (state.account_list)
             account_list_draw(state.account_list, state.content,
                               state.content_focused);
+    } else if (state.current_screen == SCREEN_BUDGETS) {
+        if (!state.budget_list)
+            state.budget_list = budget_list_create(state.db);
+        if (state.budget_list)
+            budget_list_draw(state.budget_list, state.content,
+                             state.content_focused);
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
@@ -387,6 +404,10 @@ static void ui_draw_status(void) {
                state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
         mvwprintw(state.status, 0, 1, "%s",
                   account_list_status_hint(state.account_list));
+    } else if (state.content_focused &&
+               state.current_screen == SCREEN_BUDGETS && state.budget_list) {
+        mvwprintw(state.status, 0, 1, "%s",
+                  budget_list_status_hint(state.budget_list));
     } else {
         mvwprintw(state.status, 0, 1,
                   "q:Quit  a:Add  i:Import  t:Theme  ?:Help  "
@@ -513,15 +534,24 @@ static void ui_handle_input(int ch) {
     if (state.content_focused) {
         // Delegate to list handler; if it consumes the key, we're done
         if (state.current_screen == SCREEN_TRANSACTIONS && state.txn_list) {
-            if (txn_list_handle_input(state.txn_list, state.content, ch))
+            if (txn_list_handle_input(state.txn_list, state.content, ch)) {
+                if (state.budget_list &&
+                    (ch == 'e' || ch == 'c' || ch == 'd')) {
+                    budget_list_mark_dirty(state.budget_list);
+                }
                 return;
+            }
         }
         if (state.current_screen == SCREEN_ACCOUNTS && state.account_list) {
             if (account_list_handle_input(state.account_list, state.content,
                                           ch)) {
-                if (account_list_consume_changed(state.account_list) &&
-                    state.txn_list) {
+                bool account_changed =
+                    account_list_consume_changed(state.account_list);
+                if (account_changed && state.txn_list) {
                     txn_list_mark_dirty(state.txn_list);
+                }
+                if (account_changed && state.budget_list) {
+                    budget_list_mark_dirty(state.budget_list);
                 }
                 return;
             }
@@ -529,12 +559,20 @@ static void ui_handle_input(int ch) {
         if (state.current_screen == SCREEN_CATEGORIES && state.category_list) {
             if (category_list_handle_input(state.category_list, state.content,
                                            ch)) {
-                if (category_list_consume_changed(state.category_list) &&
-                    state.txn_list) {
+                bool category_changed =
+                    category_list_consume_changed(state.category_list);
+                if (category_changed && state.txn_list) {
                     txn_list_mark_dirty(state.txn_list);
+                }
+                if (category_changed && state.budget_list) {
+                    budget_list_mark_dirty(state.budget_list);
                 }
                 return;
             }
+        }
+        if (state.current_screen == SCREEN_BUDGETS && state.budget_list) {
+            if (budget_list_handle_input(state.budget_list, state.content, ch))
+                return;
         }
 
         // LEFT / h / Escape unfocus content if not consumed above
@@ -573,6 +611,8 @@ static void ui_handle_input(int ch) {
             form_transaction(state.content, state.db, &txn, false);
         if (res == FORM_SAVED && state.txn_list)
             txn_list_mark_dirty(state.txn_list);
+        if (res == FORM_SAVED && state.budget_list)
+            budget_list_mark_dirty(state.budget_list);
     }
         touchwin(state.header);
         touchwin(state.sidebar);
@@ -586,6 +626,8 @@ static void ui_handle_input(int ch) {
         int n = import_dialog(state.content, state.db, acct_id);
         if (n > 0 && state.txn_list)
             txn_list_mark_dirty(state.txn_list);
+        if (n > 0 && state.budget_list)
+            budget_list_mark_dirty(state.budget_list);
         touchwin(state.header);
         touchwin(state.sidebar);
         touchwin(state.content);
@@ -649,6 +691,7 @@ void ui_run(sqlite3 *db) {
     state.txn_list = NULL;
     state.account_list = NULL;
     state.category_list = NULL;
+    state.budget_list = NULL;
 
     ui_create_layout();
     refresh(); // sync stdscr so getch() won't blank the screen
@@ -665,5 +708,7 @@ void ui_run(sqlite3 *db) {
     state.account_list = NULL;
     category_list_destroy(state.category_list);
     state.category_list = NULL;
+    budget_list_destroy(state.budget_list);
+    state.budget_list = NULL;
     ui_destroy_layout();
 }

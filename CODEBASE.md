@@ -23,8 +23,8 @@ Quick-reference for the current state of every file, its role, and key implement
 |------|---------|
 | `include/db/db.h` | `db_init(path)` returns `sqlite3*`, `db_close(db)` |
 | `src/db/db.c` (175 lines) | Creates directory, opens SQLite, creates schema (5 tables + 7 indexes), runs targeted migrations, and seeds defaults on first run. Key helpers: `ensure_dir_exists()`, `exec_sql()`, `is_new_database()`, `create_schema()`, `migrate_schema()`, `seed_defaults()`. |
-| `include/db/query.h` | CRUD declarations + list/chart row structs (`txn_row_t`, `balance_point_t`) |
-| `src/db/query.c` | Query implementations for accounts/categories/transactions, account summaries, and balance-series chart data (`db_get_account_balance_series()`). List-style fetchers use prepare/bind/step/realloc/finalize patterns and return count or -1. |
+| `include/db/query.h` | CRUD declarations + list/chart/budget row structs (`txn_row_t`, `balance_point_t`, `budget_row_t`) |
+| `src/db/query.c` | Query implementations for accounts/categories/transactions, budget rollups/effective rules, account summaries, and balance-series chart data (`db_get_account_balance_series()`). List-style fetchers use prepare/bind/step/realloc/finalize patterns and return count or -1. |
 
 ### Models (`include/models/`)
 
@@ -34,7 +34,7 @@ Quick-reference for the current state of every file, its role, and key implement
 | `category.h` | `category_t`, `category_type_t` | `id`, `name[64]`, `type` (EXPENSE/INCOME), `parent_id` |
 | `transaction.h` | `transaction_t`, `transaction_type_t` | `id`, `amount_cents`, `type` (EXPENSE/INCOME/TRANSFER), `account_id`, `category_id`, `date[11]` (posted), `reflection_date[11]` (optional override), `payee[128]`, `description[256]`, `transfer_id` |
 | `budget.h` | `budget_t` | `id`, `category_id`, `month[8]` ("YYYY-MM"), `limit_cents` |
-| `query.h` | `txn_row_t` | `id`, `amount_cents`, `type`, `date[11]` (posted), `reflection_date[11]`, `effective_date[11]`, `category_name[64]`, `payee[128]`, `description[256]` — row for list display/filter/sort |
+| `query.h` | `txn_row_t`, `budget_row_t` | `txn_row_t`: `id`, `amount_cents`, `type`, `date[11]` (posted), `reflection_date[11]`, `effective_date[11]`, `category_name[64]`, `payee[128]`, `description[256]`. `budget_row_t`: `category_id`, `parent_category_id`, `category_name[64]`, `child_count`, `net_spent_cents`, `limit_cents`, `has_rule`, `utilization_bps`. |
 
 ### UI Layer (`ui/`)
 
@@ -46,6 +46,8 @@ Quick-reference for the current state of every file, its role, and key implement
 | `src/ui/form.c` (620 lines) | Modal transaction form. Centered overlay on content window. Fields: Type (toggle), Amount (digits+dot), Account (dropdown), Category (dropdown, reloads on type change), Date (posted, YYYY-MM-DD), Reflection Date (optional YYYY-MM-DD), Payee, Description, Submit button. Dropdowns scroll with MAX_DROP=5 visible. Saves via `db_insert_transaction()`/`db_update_transaction()`. |
 | `include/ui/txn_list.h` | Opaque `txn_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty/get_current_account_id |
 | `src/ui/txn_list.c` | Scrollable transaction list per account with summary header and 90-day balance trend chart (auto-hides on small terminals). Account tabs (1-9 switching), sorting/filtering, colored amounts, bulk selection/edit helpers, and lazy reload via dirty flag. |
+| `include/ui/budget_list.h` | Opaque `budget_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty |
+| `src/ui/budget_list.c` | Budget view for the selected month: active parent rollups + child spend lines, inline parent budget edits, month navigation, and threshold-colored horizontal progress bars. |
 | `include/ui/import_dialog.h` | `import_dialog(parent, db, current_account_id)` — returns imported count or -1 if cancelled |
 | `src/ui/import_dialog.c` | Multi-stage modal dialog (56×20). Stages: PATH (text input + parse), CONFIRM_CC (card list with match info and import/skip counts), SELECT_ACCT (j/k scrollable account list), RESULT (final counts), ERROR (error message). |
 
@@ -59,15 +61,20 @@ Quick-reference for the current state of every file, its role, and key implement
 
 | ID | Name | Foreground | Background | Used In |
 |----|------|------------|------------|---------|
-| 1 | `COLOR_HEADER` | BLACK | CYAN | Header bar |
-| 2 | `COLOR_SELECTED` | BLACK | WHITE | Sidebar highlight, account tabs |
-| 3 | `COLOR_STATUS` | BLACK | CYAN | Status bar |
-| 10 | `COLOR_FORM` | WHITE | BLUE | Form background |
-| 11 | `COLOR_FORM_ACTIVE` | BLACK | CYAN | Active form field |
-| 12 | `COLOR_EXPENSE` | RED | default | Expense amounts in list |
-| 13 | `COLOR_INCOME` | GREEN | default | Income amounts in list |
+| 1 | `COLOR_NORMAL` | CUST_FG | CUST_BG | Default text/background |
+| 2 | `COLOR_HEADER` | CUST_BG | CUST_BLUE | Header bar |
+| 3 | `COLOR_SELECTED` | CUST_BG | CUST_FG | Sidebar/list selected row |
+| 4 | `COLOR_STATUS` | CUST_BG | CUST_BLUE | Status bar |
+| 5 | `COLOR_FORM` | CUST_BG | CUST_FG | Modal/dialog base |
+| 6 | `COLOR_FORM_ACTIVE` | CUST_BG | CUST_AQUA | Active form field |
+| 7 | `COLOR_EXPENSE` | CUST_RED | CUST_BG | Expense / overrun visuals |
+| 8 | `COLOR_INCOME` | CUST_GREEN | CUST_BG | Income / under-limit visuals |
+| 9 | `COLOR_INFO` | CUST_AQUA | CUST_BG | Informational text |
+| 10 | `COLOR_FORM_DROPDOWN` | CUST_FG | CUST_SURFACE | Dropdown layer |
+| 11 | `COLOR_ERROR` | CUST_RED | CUST_BG | Error text/borders |
+| 12 | `COLOR_WARNING` | CUST_YELLOW | CUST_BG | Budget warning threshold (100-125%) |
 
-IDs 1-3 are in the `enum` in `ui.c`; 10-11 are defined with literal ints (shared between `ui.c` init and `form.c` `enum`); 12-13 are `COLOR_EXPENSE`/`COLOR_INCOME` in both `ui.c` enum and `txn_list.c` `#define`.
+Color pair IDs are centralized in `include/ui/colors.h`.
 
 ## UI Architecture
 
@@ -79,11 +86,11 @@ IDs 1-3 are in the `enum` in `ui.c`; 10-11 are defined with literal ints (shared
 
 **Focus model** (`content_focused` flag in `state`):
 - Sidebar focused (default): UP/DOWN navigate sidebar items, Enter/Right selects and focuses content
-- Content focused: LEFT/Escape returns to sidebar. Keys delegate to the active screen's handler (currently only `txn_list_handle_input`). Unhandled keys (q, a, KEY_RESIZE) fall through to the main switch.
+- Content focused: Escape returns to sidebar. Keys delegate to the active screen's handler (`txn_list`, `account_list`, `category_list`, `budget_list`). Unhandled keys (q, a, KEY_RESIZE) fall through to the main switch.
 - Sidebar highlight dims (A_DIM) when content is focused.
 - Status bar shows screen-specific hints when content is focused.
 
-**Screen content**: Only SCREEN_TRANSACTIONS has a dedicated renderer (`txn_list_draw`). All other screens show a centered placeholder label.
+**Screen content**: Dedicated renderers exist for Transactions, Accounts, Categories, and Budgets. Dashboard/Reports still show placeholders.
 
 ## DB Query Patterns
 

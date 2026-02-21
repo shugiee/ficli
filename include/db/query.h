@@ -134,4 +134,38 @@ typedef struct {
 // Fetch transactions for an account. Caller frees *out. Returns count, -1 on error.
 int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out);
 
+// Budget row for the Budgets screen. utilization_bps is basis points where
+// 10000 = 100%; -1 means utilization is not defined (no active budget limit).
+typedef struct {
+    int64_t category_id;
+    int64_t parent_category_id; // 0 for top-level categories
+    char category_name[64];
+    int child_count; // direct children
+    int64_t net_spent_cents;
+    int64_t limit_cents;
+    bool has_rule;
+    int utilization_bps;
+} budget_row_t;
+
+// Fetch active top-level budget rows for month "YYYY-MM". Caller frees *out.
+// Returns count, -1 on error.
+int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
+                                 budget_row_t **out);
+
+// Fetch active direct child rows for one top-level category and month
+// "YYYY-MM". Caller frees *out. Returns count, -1 on error.
+int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
+                                       const char *month_ym, budget_row_t **out);
+
+// Set a category budget rule effective from month "YYYY-MM". If the exact
+// effective month exists, updates it. Returns 0 success, -1 on error.
+int db_set_budget_effective(sqlite3 *db, int64_t category_id,
+                            const char *effective_month_ym,
+                            int64_t limit_cents);
+
+// Fetch effective budget limit for a category in month "YYYY-MM". Returns 0
+// success, -2 when no matching rule exists, -1 on error.
+int db_get_budget_limit_for_month(sqlite3 *db, int64_t category_id,
+                                  const char *month_ym, int64_t *out_limit_cents);
+
 #endif

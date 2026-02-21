@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <limits.h>
 
 static const char *account_type_db_strings[] = {
     "CASH", "CHECKING", "SAVINGS", "CREDIT_CARD", "PHYSICAL_ASSET", "INVESTMENT"
@@ -174,6 +175,46 @@ static int date_add_one_day(char date[11]) {
     if (strftime(date, 11, "%Y-%m-%d", &tmv) != 10)
         return -1;
     return 0;
+}
+
+static int normalize_budget_month(const char *src, char out[8]) {
+    if (!src || !out)
+        return -1;
+    if (strlen(src) != 7 || src[4] != '-')
+        return -1;
+
+    int y = 0;
+    int m = 0;
+    if (sscanf(src, "%4d-%2d", &y, &m) != 2)
+        return -1;
+    if (y < 1900 || m < 1 || m > 12)
+        return -1;
+
+    snprintf(out, 8, "%04d-%02d", y, m);
+    return 0;
+}
+
+static void compute_budget_utilization(budget_row_t *row) {
+    if (!row)
+        return;
+
+    if (!row->has_rule || row->limit_cents <= 0) {
+        row->utilization_bps = -1;
+        return;
+    }
+
+    int64_t spent = row->net_spent_cents;
+    if (spent < 0)
+        spent = 0;
+
+    if (spent > INT64_MAX / 10000) {
+        row->utilization_bps = INT_MAX;
+        return;
+    }
+    int64_t util = (spent * 10000) / row->limit_cents;
+    if (util > INT_MAX)
+        util = INT_MAX;
+    row->utilization_bps = (int)util;
 }
 
 int db_get_accounts(sqlite3 *db, account_t **out) {
@@ -1796,4 +1837,347 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
     }
 
     return 0;
+}
+
+int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
+                                 budget_row_t **out) {
+    if (!out)
+        return -1;
+    *out = NULL;
+
+    char norm_month[8];
+    if (normalize_budget_month(month_ym, norm_month) < 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "WITH RECURSIVE"
+        " parents AS ("
+        "   SELECT id, name FROM categories WHERE parent_id IS NULL"
+        " ),"
+        " descendants(parent_id, category_id) AS ("
+        "   SELECT p.id, p.id FROM parents p"
+        "   UNION ALL"
+        "   SELECT d.parent_id, c.id"
+        "   FROM descendants d"
+        "   JOIN categories c ON c.parent_id = d.category_id"
+        " ),"
+        " monthly_net AS ("
+        "   SELECT d.parent_id,"
+        "          COALESCE(SUM(CASE"
+        "            WHEN t.type = 'EXPENSE' THEN t.amount_cents"
+        "            WHEN t.type = 'INCOME' THEN -t.amount_cents"
+        "            ELSE 0"
+        "          END), 0) AS net_spent_cents"
+        "   FROM descendants d"
+        "   LEFT JOIN transactions t"
+        "     ON t.category_id = d.category_id"
+        "    AND substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
+        "    AND t.type IN ('EXPENSE', 'INCOME')"
+        "   GROUP BY d.parent_id"
+        " ),"
+        " flags AS ("
+        "   SELECT p.id AS parent_id,"
+        "          EXISTS("
+        "            SELECT 1 FROM budgets b"
+        "            WHERE b.category_id = p.id AND b.month <= ?"
+        "          ) AS has_rule,"
+        "          EXISTS("
+        "            SELECT 1"
+        "            FROM descendants dd"
+        "            JOIN budgets b2 ON b2.category_id = dd.category_id"
+        "            WHERE dd.parent_id = p.id AND b2.month <= ?"
+        "          ) AS subtree_has_rule,"
+        "          ("
+        "            SELECT b3.limit_cents"
+        "            FROM budgets b3"
+        "            WHERE b3.category_id = p.id AND b3.month <= ?"
+        "            ORDER BY b3.month DESC"
+        "            LIMIT 1"
+        "          ) AS limit_cents,"
+        "          ("
+        "            SELECT COUNT(*) FROM categories c WHERE c.parent_id = p.id"
+        "          ) AS child_count"
+        "   FROM parents p"
+        " )"
+        " SELECT p.id, p.name, f.child_count,"
+        "        COALESCE(mn.net_spent_cents, 0),"
+        "        COALESCE(f.limit_cents, 0),"
+        "        f.has_rule"
+        " FROM parents p"
+        " JOIN flags f ON f.parent_id = p.id"
+        " LEFT JOIN monthly_net mn ON mn.parent_id = p.id"
+        " WHERE f.has_rule = 1"
+        "    OR f.subtree_has_rule = 1"
+        "    OR COALESCE(mn.net_spent_cents, 0) != 0"
+        " ORDER BY p.name",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_budget_rows_for_month prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, norm_month, -1, SQLITE_TRANSIENT);
+
+    int capacity = 16;
+    int count = 0;
+    budget_row_t *list = malloc((size_t)capacity * sizeof(budget_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            budget_row_t *tmp =
+                realloc(list, (size_t)capacity * sizeof(budget_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+
+        memset(&list[count], 0, sizeof(budget_row_t));
+        list[count].category_id = sqlite3_column_int64(stmt, 0);
+        const char *name = (const char *)sqlite3_column_text(stmt, 1);
+        snprintf(list[count].category_name, sizeof(list[count].category_name),
+                 "%s", name ? name : "");
+        list[count].child_count = sqlite3_column_int(stmt, 2);
+        list[count].net_spent_cents = sqlite3_column_int64(stmt, 3);
+        list[count].limit_cents = sqlite3_column_int64(stmt, 4);
+        list[count].has_rule = sqlite3_column_int(stmt, 5) != 0;
+        list[count].parent_category_id = 0;
+        compute_budget_utilization(&list[count]);
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_budget_rows_for_month step: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(list);
+        return 0;
+    }
+    *out = list;
+    return count;
+}
+
+int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
+                                       const char *month_ym,
+                                       budget_row_t **out) {
+    if (!out || parent_category_id <= 0)
+        return -1;
+    *out = NULL;
+
+    char norm_month[8];
+    if (normalize_budget_month(month_ym, norm_month) < 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "WITH RECURSIVE"
+        " roots AS ("
+        "   SELECT id, name FROM categories WHERE parent_id = ?"
+        " ),"
+        " descendants(root_id, category_id) AS ("
+        "   SELECT r.id, r.id FROM roots r"
+        "   UNION ALL"
+        "   SELECT d.root_id, c.id"
+        "   FROM descendants d"
+        "   JOIN categories c ON c.parent_id = d.category_id"
+        " ),"
+        " monthly_net AS ("
+        "   SELECT d.root_id,"
+        "          COALESCE(SUM(CASE"
+        "            WHEN t.type = 'EXPENSE' THEN t.amount_cents"
+        "            WHEN t.type = 'INCOME' THEN -t.amount_cents"
+        "            ELSE 0"
+        "          END), 0) AS net_spent_cents"
+        "   FROM descendants d"
+        "   LEFT JOIN transactions t"
+        "     ON t.category_id = d.category_id"
+        "    AND substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
+        "    AND t.type IN ('EXPENSE', 'INCOME')"
+        "   GROUP BY d.root_id"
+        " )"
+        " SELECT r.id, r.name,"
+        "        (SELECT COUNT(*) FROM categories c WHERE c.parent_id = r.id),"
+        "        COALESCE(mn.net_spent_cents, 0),"
+        "        COALESCE(("
+        "          SELECT b.limit_cents FROM budgets b"
+        "          WHERE b.category_id = r.id AND b.month <= ?"
+        "          ORDER BY b.month DESC"
+        "          LIMIT 1"
+        "        ), 0),"
+        "        EXISTS("
+        "          SELECT 1 FROM budgets b2"
+        "          WHERE b2.category_id = r.id AND b2.month <= ?"
+        "        )"
+        " FROM roots r"
+        " LEFT JOIN monthly_net mn ON mn.root_id = r.id"
+        " WHERE COALESCE(mn.net_spent_cents, 0) != 0"
+        "    OR EXISTS("
+        "      SELECT 1 FROM budgets b3"
+        "      WHERE b3.category_id = r.id AND b3.month <= ?"
+        "    )"
+        " ORDER BY r.name",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_budget_child_rows_for_month prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, parent_category_id);
+    sqlite3_bind_text(stmt, 2, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, norm_month, -1, SQLITE_TRANSIENT);
+
+    int capacity = 8;
+    int count = 0;
+    budget_row_t *list = malloc((size_t)capacity * sizeof(budget_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            budget_row_t *tmp =
+                realloc(list, (size_t)capacity * sizeof(budget_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+
+        memset(&list[count], 0, sizeof(budget_row_t));
+        list[count].category_id = sqlite3_column_int64(stmt, 0);
+        const char *name = (const char *)sqlite3_column_text(stmt, 1);
+        snprintf(list[count].category_name, sizeof(list[count].category_name),
+                 "%s", name ? name : "");
+        list[count].child_count = sqlite3_column_int(stmt, 2);
+        list[count].net_spent_cents = sqlite3_column_int64(stmt, 3);
+        list[count].limit_cents = sqlite3_column_int64(stmt, 4);
+        list[count].has_rule = sqlite3_column_int(stmt, 5) != 0;
+        list[count].parent_category_id = parent_category_id;
+        compute_budget_utilization(&list[count]);
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_budget_child_rows_for_month step: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(list);
+        return 0;
+    }
+    *out = list;
+    return count;
+}
+
+int db_set_budget_effective(sqlite3 *db, int64_t category_id,
+                            const char *effective_month_ym,
+                            int64_t limit_cents) {
+    if (category_id <= 0 || limit_cents < 0)
+        return -1;
+
+    char norm_month[8];
+    if (normalize_budget_month(effective_month_ym, norm_month) < 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO budgets (category_id, month, limit_cents)"
+        " VALUES (?, ?, ?)"
+        " ON CONFLICT(category_id, month)"
+        " DO UPDATE SET limit_cents = excluded.limit_cents",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_set_budget_effective prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    sqlite3_bind_text(stmt, 2, norm_month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, limit_cents);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_set_budget_effective step: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    return 0;
+}
+
+int db_get_budget_limit_for_month(sqlite3 *db, int64_t category_id,
+                                  const char *month_ym,
+                                  int64_t *out_limit_cents) {
+    if (category_id <= 0 || !out_limit_cents)
+        return -1;
+    *out_limit_cents = 0;
+
+    char norm_month[8];
+    if (normalize_budget_month(month_ym, norm_month) < 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT limit_cents"
+        " FROM budgets"
+        " WHERE category_id = ? AND month <= ?"
+        " ORDER BY month DESC"
+        " LIMIT 1",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_budget_limit_for_month prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    sqlite3_bind_text(stmt, 2, norm_month, -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *out_limit_cents = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE)
+        return -2;
+
+    fprintf(stderr, "db_get_budget_limit_for_month step: %s\n",
+            sqlite3_errmsg(db));
+    return -1;
 }
