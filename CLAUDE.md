@@ -63,6 +63,7 @@ make clean    # clean build artifacts
 ## Database
 - **Path:** `~/.local/share/ficli/ficli.db` (created automatically)
 - **Amounts:** Stored as integers in cents to avoid floating-point issues
+- **Dates:** `date` is the posted/processed date; optional `reflection_date` controls reporting/budget bucket via `COALESCE(reflection_date, date)`
 - **Categories:** Have a type (`EXPENSE`/`INCOME`) and optional `parent_id` for sub-categories (displayed as `Parent:Child`)
 - **Accounts:** Each transaction belongs to an account; transfers are two linked transactions sharing a `transfer_id`
 - **Defaults seeded on first run:** 1 account (Cash), 9 expense categories, 4 income categories

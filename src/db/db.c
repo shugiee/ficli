@@ -50,6 +50,38 @@ static bool is_new_database(sqlite3 *db) {
     return !exists;
 }
 
+static bool transactions_has_column(sqlite3 *db, const char *column_name) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, "PRAGMA table_info(transactions)", -1,
+                                &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return false;
+    }
+
+    bool found = false;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *name = (const char *)sqlite3_column_text(stmt, 1);
+        if (name && strcmp(name, column_name) == 0) {
+            found = true;
+            break;
+        }
+    }
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+static int migrate_schema(sqlite3 *db) {
+    if (!transactions_has_column(db, "reflection_date")) {
+        if (exec_sql(db, "ALTER TABLE transactions ADD COLUMN reflection_date TEXT;") != 0)
+            return -1;
+    }
+
+    return exec_sql(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_transactions_effective_date"
+        " ON transactions(COALESCE(reflection_date, date));");
+}
+
 static int create_schema(sqlite3 *db) {
     const char *schema_sql =
         "CREATE TABLE IF NOT EXISTS accounts ("
@@ -76,6 +108,8 @@ static int create_schema(sqlite3 *db) {
         "    account_id INTEGER NOT NULL,"
         "    category_id INTEGER,"
         "    date TEXT NOT NULL,"
+        "    reflection_date TEXT"
+        "        CHECK(reflection_date IS NULL OR reflection_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),"
         "    payee TEXT,"
         "    description TEXT,"
         "    transfer_id INTEGER,"
@@ -97,6 +131,7 @@ static int create_schema(sqlite3 *db) {
         "CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id);"
+        "CREATE INDEX IF NOT EXISTS idx_transactions_effective_date ON transactions(COALESCE(reflection_date, date));"
         "CREATE INDEX IF NOT EXISTS idx_budgets_month ON budgets(month);"
         "CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);";
 
@@ -153,6 +188,12 @@ sqlite3 *db_init(const char *path) {
 
     if (create_schema(db) != 0) {
         fprintf(stderr, "Failed to create database schema\n");
+        sqlite3_close(db);
+        return NULL;
+    }
+
+    if (migrate_schema(db) != 0) {
+        fprintf(stderr, "Failed to migrate database schema\n");
         sqlite3_close(db);
         return NULL;
     }

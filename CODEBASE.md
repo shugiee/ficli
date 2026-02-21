@@ -22,7 +22,7 @@ Quick-reference for the current state of every file, its role, and key implement
 | File | Purpose |
 |------|---------|
 | `include/db/db.h` | `db_init(path)` returns `sqlite3*`, `db_close(db)` |
-| `src/db/db.c` (175 lines) | Creates directory, opens SQLite, creates schema (5 tables + 6 indexes), seeds defaults on first run. Key helpers: `ensure_dir_exists()`, `exec_sql()`, `is_new_database()`, `create_schema()`, `seed_defaults()`. |
+| `src/db/db.c` (175 lines) | Creates directory, opens SQLite, creates schema (5 tables + 7 indexes), runs targeted migrations, and seeds defaults on first run. Key helpers: `ensure_dir_exists()`, `exec_sql()`, `is_new_database()`, `create_schema()`, `migrate_schema()`, `seed_defaults()`. |
 | `include/db/query.h` | CRUD declarations + list/chart row structs (`txn_row_t`, `balance_point_t`) |
 | `src/db/query.c` | Query implementations for accounts/categories/transactions, account summaries, and balance-series chart data (`db_get_account_balance_series()`). List-style fetchers use prepare/bind/step/realloc/finalize patterns and return count or -1. |
 
@@ -32,9 +32,9 @@ Quick-reference for the current state of every file, its role, and key implement
 |------|--------|------------|
 | `account.h` | `account_t`, `account_type_t` | `id`, `name[64]`, `type` (CASH/CHECKING/SAVINGS/CREDIT_CARD/PHYSICAL_ASSET/INVESTMENT), `card_last4[5]` (non-empty only for CREDIT_CARD) |
 | `category.h` | `category_t`, `category_type_t` | `id`, `name[64]`, `type` (EXPENSE/INCOME), `parent_id` |
-| `transaction.h` | `transaction_t`, `transaction_type_t` | `id`, `amount_cents`, `type` (EXPENSE/INCOME/TRANSFER), `account_id`, `category_id`, `date[11]`, `description[256]`, `transfer_id` |
+| `transaction.h` | `transaction_t`, `transaction_type_t` | `id`, `amount_cents`, `type` (EXPENSE/INCOME/TRANSFER), `account_id`, `category_id`, `date[11]` (posted), `reflection_date[11]` (optional override), `payee[128]`, `description[256]`, `transfer_id` |
 | `budget.h` | `budget_t` | `id`, `category_id`, `month[8]` ("YYYY-MM"), `limit_cents` |
-| `query.h` | `txn_row_t` | `id`, `amount_cents`, `type`, `date[11]`, `category_name[64]`, `description[256]` — flat row for list display |
+| `query.h` | `txn_row_t` | `id`, `amount_cents`, `type`, `date[11]` (posted), `reflection_date[11]`, `effective_date[11]`, `category_name[64]`, `payee[128]`, `description[256]` — row for list display/filter/sort |
 
 ### UI Layer (`ui/`)
 
@@ -43,7 +43,7 @@ Quick-reference for the current state of every file, its role, and key implement
 | `include/ui/ui.h` | `screen_t` enum (DASHBOARD, TRANSACTIONS, CATEGORIES, BUDGETS, REPORTS, COUNT), `ui_init()`, `ui_cleanup()`, `ui_run()` |
 | `src/ui/ui.c` (226 lines) | Main UI loop. Static `state` struct holds windows, db handle, screen selection, focus flag, txn_list pointer. Manages layout (header/sidebar/content/status), drawing, and input dispatch. |
 | `include/ui/form.h` | `form_add_transaction()` returns `FORM_SAVED` or `FORM_CANCELLED` |
-| `src/ui/form.c` (620 lines) | Modal transaction form. Centered overlay on content window. Fields: Type (toggle), Amount (digits+dot), Account (dropdown), Category (dropdown, reloads on type change), Date (YYYY-MM-DD, defaults today), Description (free text), Submit button. Dropdowns scroll with MAX_DROP=5 visible. Saves via `db_insert_transaction()`. |
+| `src/ui/form.c` (620 lines) | Modal transaction form. Centered overlay on content window. Fields: Type (toggle), Amount (digits+dot), Account (dropdown), Category (dropdown, reloads on type change), Date (posted, YYYY-MM-DD), Reflection Date (optional YYYY-MM-DD), Payee, Description, Submit button. Dropdowns scroll with MAX_DROP=5 visible. Saves via `db_insert_transaction()`/`db_update_transaction()`. |
 | `include/ui/txn_list.h` | Opaque `txn_list_state_t`, create/destroy/draw/handle_input/status_hint/mark_dirty/get_current_account_id |
 | `src/ui/txn_list.c` | Scrollable transaction list per account with summary header and 90-day balance trend chart (auto-hides on small terminals). Account tabs (1-9 switching), sorting/filtering, colored amounts, bulk selection/edit helpers, and lazy reload via dirty flag. |
 | `include/ui/import_dialog.h` | `import_dialog(parent, db, current_account_id)` — returns imported count or -1 if cancelled |
@@ -101,6 +101,6 @@ Types are stored as TEXT in SQLite (`"EXPENSE"`, `"INCOME"`, `"TRANSFER"`) and c
 
 **Default seed data:** 1 account ("Cash", type CASH), 9 expense categories, 4 income categories.
 
-**Indexes:** `idx_transactions_date`, `idx_transactions_category`, `idx_transactions_account`, `idx_transactions_transfer`, `idx_budgets_month`, `idx_categories_parent`.
+**Indexes:** `idx_transactions_date`, `idx_transactions_effective_date`, `idx_transactions_category`, `idx_transactions_account`, `idx_transactions_transfer`, `idx_budgets_month`, `idx_categories_parent`.
 
-Amounts are stored as `INTEGER` cents throughout. Dates are `TEXT` in `YYYY-MM-DD` format.
+Amounts are stored as `INTEGER` cents throughout. Dates are `TEXT` in `YYYY-MM-DD` format. Reporting/budgeting date uses `COALESCE(reflection_date, date)` while account balance charting still uses posted `date`.

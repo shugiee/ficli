@@ -123,7 +123,9 @@ typedef struct {
     int64_t id;
     int64_t amount_cents;
     transaction_type_t type;
-    char date[11];
+    char date[11];              // posted date
+    char reflection_date[11];   // optional reporting override
+    char effective_date[11];    // COALESCE(reflection_date, date)
     char category_name[64];  // "Parent:Child" via JOIN, or ""
     char payee[128];
     char description[256];

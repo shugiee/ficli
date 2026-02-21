@@ -10,11 +10,12 @@
 #include <string.h>
 
 #define GAP_WIDTH 3
-#define DATE_COL_WIDTH 12
+#define DATE_COL_WIDTH 10
+#define REFLECTION_DATE_COL_WIDTH 10
 #define TYPE_COL_WIDTH 8
 #define CATEGORY_COL_WIDTH 20
 #define AMOUNT_COL_WIDTH 13
-#define PAYEE_COL_WIDTH 30
+#define PAYEE_COL_WIDTH 24
 #define BALANCE_CHART_LOOKBACK_DAYS 90
 #define CHART_PLOT_HEIGHT 6
 #define CHART_MIN_WIDTH 56
@@ -364,6 +365,10 @@ static bool matches_filter(const txn_row_t *t, const char *filter) {
         return true;
     if (contains_icase(t->date, filter))
         return true;
+    if (contains_icase(t->reflection_date, filter))
+        return true;
+    if (contains_icase(t->effective_date, filter))
+        return true;
 
     const char *type_str;
     switch (t->type) {
@@ -405,7 +410,7 @@ static int compare_txn(const void *a, const void *b) {
     int cmp = 0;
     switch (ls->sort_col) {
     case SORT_DATE:
-        cmp = strcmp(ta->date, tb->date);
+        cmp = strcmp(ta->effective_date, tb->effective_date);
         break;
     case SORT_AMOUNT:
         if (ta->amount_cents < tb->amount_cents)
@@ -421,6 +426,9 @@ static int compare_txn(const void *a, const void *b) {
         break;
     case SORT_TYPE:
         cmp = (int)ta->type - (int)tb->type;
+        break;
+    case SORT_PAYEE:
+        cmp = strcmp(ta->payee, tb->payee);
         break;
     default:
         break;
@@ -908,47 +916,67 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     }
 
     // -- Column headers with sort direction indicator --
-    // Column layout: Date(12) gap(3) Type(8) gap(3) Category(20) gap(3)
-    // Amount(13) gap(3) Payee(30) gap(3) Desc(rest)
-    int desc_w = w - 2 - DATE_COL_WIDTH - GAP_WIDTH - TYPE_COL_WIDTH -
-                 GAP_WIDTH - CATEGORY_COL_WIDTH - GAP_WIDTH - AMOUNT_COL_WIDTH -
-                 GAP_WIDTH - PAYEE_COL_WIDTH - GAP_WIDTH - 2;
+    int posted_col = 2;
+    int reflection_col = posted_col + DATE_COL_WIDTH + GAP_WIDTH;
+    int type_col = reflection_col + REFLECTION_DATE_COL_WIDTH + GAP_WIDTH;
+    int category_col = type_col + TYPE_COL_WIDTH + GAP_WIDTH;
+    int amount_col = category_col + CATEGORY_COL_WIDTH + GAP_WIDTH;
+    int payee_col = amount_col + AMOUNT_COL_WIDTH + GAP_WIDTH;
+    int desc_col = payee_col + PAYEE_COL_WIDTH + GAP_WIDTH;
+    int desc_w = w - 2 - desc_col;
     if (desc_w < DESC_COL_MIN_WIDTH)
         desc_w = DESC_COL_MIN_WIDTH;
 
-    // Print each header at its exact column to avoid UTF-8
-    // byte-vs-display-width padding issues, then overlay the sort indicator
-    // right after the active label text.
+    const char *posted_label = "Posted";
+    const char *reflection_label = "Reflect";
+    const char *type_label = "Type";
+    const char *category_label = "Category";
+    const char *amount_label = "Amount";
+    const char *payee_label = "Payee";
+    const char *description_label = "Description";
+
     const char *ind_str = ls->sort_asc ? "\u2191" : "\u2193";
     wattron(win, A_BOLD);
-    mvwprintw(win, layout.header_row, 2, "%-*s", DATE_COL_WIDTH, "Date");
-    mvwprintw(win, layout.header_row, 17, "%-*s", TYPE_COL_WIDTH, "Type");
-    mvwprintw(win, layout.header_row, 28, "%-*s", CATEGORY_COL_WIDTH, "Category");
-    mvwprintw(win, layout.header_row, 51, "%-*s", AMOUNT_COL_WIDTH, "Amount");
-    mvwprintw(win, layout.header_row, 67, "%-*s", PAYEE_COL_WIDTH, "Payee");
-    mvwprintw(win, layout.header_row, 100, "%-*s", desc_w, "Description");
+    mvwprintw(win, layout.header_row, posted_col, "%-*s", DATE_COL_WIDTH,
+              posted_label);
+    mvwprintw(win, layout.header_row, reflection_col, "%-*s",
+              REFLECTION_DATE_COL_WIDTH, reflection_label);
+    mvwprintw(win, layout.header_row, type_col, "%-*s", TYPE_COL_WIDTH,
+              type_label);
+    mvwprintw(win, layout.header_row, category_col, "%-*s", CATEGORY_COL_WIDTH,
+              category_label);
+    mvwprintw(win, layout.header_row, amount_col, "%-*s", AMOUNT_COL_WIDTH,
+              amount_label);
+    mvwprintw(win, layout.header_row, payee_col, "%-*s", PAYEE_COL_WIDTH,
+              payee_label);
+    mvwprintw(win, layout.header_row, desc_col, "%-*s", desc_w,
+              description_label);
+
+    int indicator_col = -1;
     switch (ls->sort_col) {
     case SORT_DATE:
-        mvwprintw(win, layout.header_row, 7, "%s", ind_str);
+        indicator_col = reflection_col + (int)strlen(reflection_label);
         break;
     case SORT_TYPE:
-        mvwprintw(win, layout.header_row, 22, "%s", ind_str);
+        indicator_col = type_col + (int)strlen(type_label);
         break;
     case SORT_CATEGORY:
-        mvwprintw(win, layout.header_row, 37, "%s", ind_str);
+        indicator_col = category_col + (int)strlen(category_label);
         break;
     case SORT_AMOUNT:
-        mvwprintw(win, layout.header_row, 54, "%s", ind_str);
+        indicator_col = amount_col + (int)strlen(amount_label);
         break;
     case SORT_PAYEE:
-        mvwprintw(win, layout.header_row, 69, "%s", ind_str);
+        indicator_col = payee_col + (int)strlen(payee_label);
         break;
     case SORT_DESCRIPTION:
-        mvwprintw(win, layout.header_row, 108, "%s", ind_str);
+        indicator_col = desc_col + (int)strlen(description_label);
         break;
     default:
         break;
     }
+    if (indicator_col >= 2 && indicator_col < w - 1)
+        mvwprintw(win, layout.header_row, indicator_col, "%s", ind_str);
     wattroff(win, A_BOLD);
 
     // -- Horizontal rule --
@@ -1011,11 +1039,6 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         char amt[24];
         format_amount(t->amount_cents, t->type, amt, sizeof(amt));
 
-        // Truncate description to fit
-        char desc_buf[256];
-        snprintf(desc_buf, sizeof(desc_buf), "%-*.*s", desc_w, desc_w,
-                 t->description);
-
         bool cursor_selected = (idx == ls->cursor);
         bool row_selected = txn_list_is_selected(ls, t->id);
         if (cursor_selected) {
@@ -1026,27 +1049,27 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
 
         mvwaddch(win, row, 1, row_selected ? '*' : ' ');
 
-        // Print the base row (clears it)
-        mvwprintw(win, row, 2, "%-*s   %-*s   %-*.*s   ", DATE_COL_WIDTH,
-                  t->date, TYPE_COL_WIDTH, type_str, CATEGORY_COL_WIDTH,
+        if (w > 4)
+            mvwprintw(win, row, 2, "%-*s", w - 4, "");
+
+        mvwprintw(win, row, posted_col, "%-*s", DATE_COL_WIDTH, t->date);
+        mvwprintw(win, row, reflection_col, "%-*s", REFLECTION_DATE_COL_WIDTH,
+                  t->reflection_date);
+        mvwprintw(win, row, type_col, "%-*s", TYPE_COL_WIDTH, type_str);
+        mvwprintw(win, row, category_col, "%-*.*s", CATEGORY_COL_WIDTH,
                   CATEGORY_COL_WIDTH, t->category_name);
 
         // Amount with color
-        int amount_col = 2 + DATE_COL_WIDTH + GAP_WIDTH + TYPE_COL_WIDTH +
-                         GAP_WIDTH + CATEGORY_COL_WIDTH + GAP_WIDTH;
         int color =
             (t->type == TRANSACTION_EXPENSE) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(color));
         mvwprintw(win, row, amount_col, "%*s", AMOUNT_COL_WIDTH, amt);
         wattroff(win, COLOR_PAIR(color));
 
-        // Payee
-        int payee_col = amount_col + AMOUNT_COL_WIDTH;
-        mvwprintw(win, row, payee_col, "   %-*.*s", PAYEE_COL_WIDTH,
+        mvwprintw(win, row, payee_col, "%-*.*s", PAYEE_COL_WIDTH,
                   PAYEE_COL_WIDTH, t->payee);
 
-        // Description
-        mvwprintw(win, row, payee_col + PAYEE_COL_WIDTH, "%s", desc_buf);
+        mvwprintw(win, row, desc_col, "%-*.*s", desc_w, desc_w, t->description);
 
         if (cursor_selected) {
             wattroff(win, A_REVERSE);

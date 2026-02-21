@@ -11,13 +11,13 @@
 #include <string.h>
 #include <time.h>
 
-#define FORM_WIDTH 50
-#define FORM_HEIGHT 21
-#define CATEGORY_FORM_WIDTH 52
+#define FORM_WIDTH 56
+#define FORM_HEIGHT 23
+#define CATEGORY_FORM_WIDTH 56
 #define CATEGORY_FORM_HEIGHT 12
 #define CATEGORY_FIELD_ROW 2
 #define LABEL_COL 2
-#define FIELD_COL 16
+#define FIELD_COL 21
 #define FIELD_WIDTH 30
 #define MAX_DROP 5
 
@@ -27,6 +27,7 @@ enum {
     FIELD_ACCOUNT,
     FIELD_CATEGORY,
     FIELD_DATE,
+    FIELD_REFLECTION_DATE,
     FIELD_PAYEE,
     FIELD_DESC,
     FIELD_SUBMIT,
@@ -56,6 +57,8 @@ typedef struct {
     int amount_pos;
     char date[11];
     int date_pos;
+    char reflection_date[11];
+    int reflection_date_pos;
     char payee[128];
     int payee_pos;
     char desc[256];
@@ -130,7 +133,8 @@ static int next_account_index(const form_state_t *fs, int current, int delta,
 }
 
 static bool field_is_text_entry(const form_state_t *fs, int field) {
-    if (field == FIELD_AMOUNT || field == FIELD_DATE || field == FIELD_DESC)
+    if (field == FIELD_AMOUNT || field == FIELD_DATE ||
+        field == FIELD_REFLECTION_DATE || field == FIELD_DESC)
         return true;
     if (field == FIELD_PAYEE)
         return !field_hidden(fs, FIELD_PAYEE);
@@ -300,6 +304,8 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
     memcpy(fs->date, datebuf, 10);
     fs->date[10] = '\0';
     fs->date_pos = 10;
+    fs->reflection_date[0] = '\0';
+    fs->reflection_date_pos = 0;
 
     if (is_edit && txn) {
         fs->txn_type = txn->type;
@@ -309,6 +315,11 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
         if (txn->date[0] != '\0') {
             snprintf(fs->date, sizeof(fs->date), "%s", txn->date);
             fs->date_pos = (int)strlen(fs->date);
+        }
+        if (txn->reflection_date[0] != '\0') {
+            snprintf(fs->reflection_date, sizeof(fs->reflection_date), "%s",
+                     txn->reflection_date);
+            fs->reflection_date_pos = (int)strlen(fs->reflection_date);
         }
         if (txn->payee[0] != '\0') {
             snprintf(fs->payee, sizeof(fs->payee), "%s", txn->payee);
@@ -364,7 +375,8 @@ static void form_cleanup_state(form_state_t *fs) {
 }
 
 static const char *field_labels[FIELD_SUBMIT] = {
-    "Type", "Amount", "Account", "Category", "Date", "Payee", "Description"};
+    "Type", "Amount", "Account", "Category", "Transaction Date",
+    "Reflection Date", "Payee", "Description"};
 
 static int field_row(int field) {
     // Row within form window for each field (after title and border)
@@ -440,6 +452,9 @@ static void form_draw(form_state_t *fs) {
         case FIELD_DATE:
             mvwprintw(w, row, FIELD_COL, "%s", fs->date);
             break;
+        case FIELD_REFLECTION_DATE:
+            mvwprintw(w, row, FIELD_COL, "%s", fs->reflection_date);
+            break;
         case FIELD_PAYEE:
             mvwprintw(w, row, FIELD_COL, "%s", fs->payee);
             break;
@@ -488,6 +503,9 @@ static void form_draw(form_state_t *fs) {
                 break;
             case FIELD_DATE:
                 wmove(w, row, FIELD_COL + fs->date_pos);
+                break;
+            case FIELD_REFLECTION_DATE:
+                wmove(w, row, FIELD_COL + fs->reflection_date_pos);
                 break;
             case FIELD_PAYEE:
                 wmove(w, row, FIELD_COL + fs->payee_pos);
@@ -1110,6 +1128,13 @@ static bool form_validate_and_save(form_state_t *fs) {
         fs->current_field = FIELD_DATE;
         return false;
     }
+    if (fs->reflection_date[0] != '\0' &&
+        !validate_date(fs->reflection_date)) {
+        snprintf(fs->error, sizeof(fs->error),
+                 "Invalid reflection date (YYYY-MM-DD)");
+        fs->current_field = FIELD_REFLECTION_DATE;
+        return false;
+    }
 
     // Build transaction
     transaction_t txn = {0};
@@ -1135,6 +1160,8 @@ static bool form_validate_and_save(form_state_t *fs) {
         }
     }
     snprintf(txn.date, sizeof(txn.date), "%s", fs->date);
+    snprintf(txn.reflection_date, sizeof(txn.reflection_date), "%s",
+             fs->reflection_date);
     if (fs->txn_type == TRANSACTION_TRANSFER)
         txn.payee[0] = '\0';
     else
@@ -1256,7 +1283,7 @@ static void handle_date_input(char *buf, int *pos, int ch) {
     }
 }
 
-#define ACCOUNT_FORM_WIDTH 50
+#define ACCOUNT_FORM_WIDTH 56
 #define ACCOUNT_FORM_HEIGHT 13
 
 enum {
@@ -2062,6 +2089,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_REFLECTION_DATE) {
+                handle_date_input(fs.reflection_date, &fs.reflection_date_pos,
+                                  ch);
             } else if (fs.current_field == FIELD_PAYEE) {
                 handle_text_input(fs.payee, &fs.payee_pos,
                                   (int)sizeof(fs.payee), ch, false);
@@ -2090,6 +2120,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_REFLECTION_DATE) {
+                handle_date_input(fs.reflection_date, &fs.reflection_date_pos,
+                                  ch);
             } else if (fs.current_field == FIELD_PAYEE) {
                 handle_text_input(fs.payee, &fs.payee_pos,
                                   (int)sizeof(fs.payee), ch, false);
@@ -2111,6 +2144,9 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
                                   (int)sizeof(fs.amount), ch, true);
             } else if (fs.current_field == FIELD_DATE) {
                 handle_date_input(fs.date, &fs.date_pos, ch);
+            } else if (fs.current_field == FIELD_REFLECTION_DATE) {
+                handle_date_input(fs.reflection_date, &fs.reflection_date_pos,
+                                  ch);
             } else if (fs.current_field == FIELD_PAYEE) {
                 handle_text_input(fs.payee, &fs.payee_pos,
                                   (int)sizeof(fs.payee), ch, false);
