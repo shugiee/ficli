@@ -80,7 +80,7 @@ static const help_row_t help_rows[] = {
     {"Space", "Toggle selection"},
     {"Shift+\u2191/\u2193", "Extend selection"},
     {"Esc", "Clear selection"},
-    {"e", "Edit selected"},
+    {"e", "Edit selected (or all filtered, changed fields only)"},
     {"c", "Edit category only"},
     {"d", "Delete selected"},
     {"/", "Filter"},

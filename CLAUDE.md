@@ -126,7 +126,7 @@ make clean    # clean build artifacts
 - [x] Support importing from QIF ([plan](../.claude/plans/qif-import.md))
 - [x] Keep cursor on edited transaction when categorizing, including when applying category changes to multiple transactions at once ([plan](../.claude/plans/keep-cursor-on-categorize-bulk.md))
 - [x] Allow uncategorizing transactions in `e` or `c` mode ([plan](../.claude/plans/uncategorize-transaction-edit.md))
-- [ ] Allow mass-renaming payee after filtering transactions list
+- [x] Allow mass-renaming payee after filtering transactions list ([plan](../.claude/plans/mass-rename-payee-filtered-list.md))
 - [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
 - [ ] Allow scrolling through transactions list when filtered
 - [ ] Summary/report views

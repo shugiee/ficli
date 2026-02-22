@@ -90,6 +90,18 @@ struct txn_list_state {
     bool dirty;
 };
 
+typedef struct {
+    bool amount;
+    bool type;
+    bool account;
+    bool category;
+    bool date;
+    bool reflection_date;
+    bool payee;
+    bool description;
+    bool transfer_to_account;
+} txn_edit_changes_t;
+
 static bool txn_list_is_selected(const txn_list_state_t *ls, int64_t id) {
     if (!ls || ls->selected_count <= 0 || !ls->selected_ids)
         return false;
@@ -165,33 +177,129 @@ static int txn_list_display_index_by_id(const txn_list_state_t *ls, int64_t id) 
     return -1;
 }
 
-static bool txn_list_apply_template_to_selected(txn_list_state_t *ls,
-                                                const transaction_t *tmpl,
-                                                int64_t tmpl_id,
-                                                int64_t transfer_to_account_id) {
-    if (!ls || !tmpl || ls->selected_count <= 0)
+static bool txn_edit_changes_any(const txn_edit_changes_t *changes) {
+    if (!changes)
         return false;
+    return changes->amount || changes->type || changes->account ||
+           changes->category || changes->date || changes->reflection_date ||
+           changes->payee || changes->description ||
+           changes->transfer_to_account;
+}
+
+static txn_edit_changes_t
+txn_list_compute_edit_changes(const transaction_t *before,
+                              const transaction_t *after,
+                              int64_t before_to_account_id,
+                              int64_t after_to_account_id) {
+    txn_edit_changes_t changes = {0};
+    if (!before || !after)
+        return changes;
+
+    changes.amount = before->amount_cents != after->amount_cents;
+    changes.type = before->type != after->type;
+    changes.account = before->account_id != after->account_id;
+    changes.category = before->category_id != after->category_id;
+    changes.date = strcmp(before->date, after->date) != 0;
+    changes.reflection_date =
+        strcmp(before->reflection_date, after->reflection_date) != 0;
+    changes.payee = strcmp(before->payee, after->payee) != 0;
+    changes.description = strcmp(before->description, after->description) != 0;
+    if (after->type == TRANSACTION_TRANSFER)
+        changes.transfer_to_account = before_to_account_id != after_to_account_id;
+
+    return changes;
+}
+
+static bool txn_list_apply_edit_changes_to_one(
+    txn_list_state_t *ls, int64_t id, const transaction_t *tmpl,
+    const txn_edit_changes_t *changes, int64_t new_transfer_to_account_id) {
+    if (!ls || !tmpl || !changes || id <= 0 || !txn_edit_changes_any(changes))
+        return false;
+
+    transaction_t txn = {0};
+    int rc = db_get_transaction_by_id(ls->db, (int)id, &txn);
+    if (rc != 0)
+        return false;
+
+    if (changes->amount)
+        txn.amount_cents = tmpl->amount_cents;
+    if (changes->type)
+        txn.type = tmpl->type;
+    if (changes->account)
+        txn.account_id = tmpl->account_id;
+    if (changes->category)
+        txn.category_id = tmpl->category_id;
+    if (changes->date)
+        snprintf(txn.date, sizeof(txn.date), "%s", tmpl->date);
+    if (changes->reflection_date) {
+        snprintf(txn.reflection_date, sizeof(txn.reflection_date), "%s",
+                 tmpl->reflection_date);
+    }
+    if (changes->payee)
+        snprintf(txn.payee, sizeof(txn.payee), "%s", tmpl->payee);
+    if (changes->description)
+        snprintf(txn.description, sizeof(txn.description), "%s",
+                 tmpl->description);
+
+    if (txn.type == TRANSACTION_TRANSFER) {
+        txn.category_id = 0;
+        txn.payee[0] = '\0';
+
+        int64_t to_account_id = 0;
+        if (changes->transfer_to_account || changes->type) {
+            to_account_id = new_transfer_to_account_id;
+        } else if (db_get_transfer_counterparty_account(ls->db, txn.id,
+                                                        &to_account_id) < 0) {
+            to_account_id = 0;
+        }
+
+        if (to_account_id <= 0 || to_account_id == txn.account_id)
+            return false;
+        rc = db_update_transfer(ls->db, &txn, to_account_id);
+        return rc == 0;
+    }
+
+    txn.transfer_id = 0;
+    rc = db_update_transaction(ls->db, &txn);
+    return rc == 0;
+}
+
+static bool txn_list_apply_edit_changes_to_selected(
+    txn_list_state_t *ls, const transaction_t *tmpl, int64_t tmpl_id,
+    const txn_edit_changes_t *changes, int64_t new_transfer_to_account_id) {
+    if (!ls || !tmpl || !changes || ls->selected_count <= 0 ||
+        !txn_edit_changes_any(changes))
+        return false;
+
     bool updated = false;
     for (int i = 0; i < ls->selected_count; i++) {
         int64_t id = ls->selected_ids[i];
         if (id == tmpl_id)
             continue;
-        transaction_t txn = *tmpl;
-        txn.id = id;
-        if (tmpl->type != TRANSACTION_TRANSFER)
-            txn.transfer_id = 0;
-
-        int rc = 0;
-        if (tmpl->type == TRANSACTION_TRANSFER) {
-            if (transfer_to_account_id <= 0)
-                continue;
-            rc = db_update_transfer(ls->db, &txn, transfer_to_account_id);
-        } else {
-            rc = db_update_transaction(ls->db, &txn);
-        }
-
-        if (rc == 0)
+        if (txn_list_apply_edit_changes_to_one(ls, id, tmpl, changes,
+                                               new_transfer_to_account_id)) {
             updated = true;
+        }
+    }
+    return updated;
+}
+
+static bool txn_list_apply_edit_changes_to_filtered(
+    txn_list_state_t *ls, const transaction_t *tmpl, int64_t tmpl_id,
+    const txn_edit_changes_t *changes, int64_t new_transfer_to_account_id) {
+    if (!ls || !tmpl || !changes || ls->display_count <= 0 ||
+        !txn_edit_changes_any(changes))
+        return false;
+
+    bool updated = false;
+    for (int i = 0; i < ls->display_count; i++) {
+        int64_t id = ls->display[i].id;
+        if (id == tmpl_id)
+            continue;
+        if (txn_list_apply_edit_changes_to_one(ls, id, tmpl, changes,
+                                               new_transfer_to_account_id)) {
+            updated = true;
+        }
     }
     return updated;
 }
@@ -1251,6 +1359,14 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
             transaction_t txn = {0};
             int rc = db_get_transaction_by_id(ls->db, (int)tmpl_id, &txn);
             if (rc == 0) {
+                transaction_t before_txn = txn;
+                int64_t before_to_account_id = 0;
+                if (before_txn.type == TRANSACTION_TRANSFER) {
+                    if (db_get_transfer_counterparty_account(
+                            ls->db, before_txn.id, &before_to_account_id) < 0) {
+                        before_to_account_id = 0;
+                    }
+                }
                 form_result_t res =
                     form_transaction(parent, ls->db, &txn, true);
                 if (res == FORM_SAVED) {
@@ -1261,8 +1377,17 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
                             to_account_id = 0;
                         }
                     }
-                    txn_list_apply_template_to_selected(
-                        ls, &txn, tmpl_id, to_account_id);
+                    txn_edit_changes_t changes =
+                        txn_list_compute_edit_changes(
+                            &before_txn, &txn, before_to_account_id,
+                            to_account_id);
+                    if (ls->selected_count > 0) {
+                        txn_list_apply_edit_changes_to_selected(
+                            ls, &txn, tmpl_id, &changes, to_account_id);
+                    } else if (ls->filter_len > 0 && ls->display_count > 1) {
+                        txn_list_apply_edit_changes_to_filtered(
+                            ls, &txn, tmpl_id, &changes, to_account_id);
+                    }
                     txn_list_clear_selected(ls);
                     ls->next_reload_focus_txn_id = tmpl_id;
                     ls->dirty = true;
@@ -1347,16 +1472,19 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
         return "90d chart  1-9 acct  a add  /filter  s sort  \u2190 back";
 
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
+    const char *edit_tag =
+        (ls->filter_len > 0 && ls->selected_count == 0) ? "e edit(filtered)"
+                                                        : "e edit";
     if (ls->selected_count > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
-                 ls->selected_count, filter_tag);
+                 ls->selected_count, edit_tag, filter_tag);
     } else {
         snprintf(buf, sizeof(buf),
-                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  e edit  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
-                 filter_tag);
+                 edit_tag, filter_tag);
     }
     return buf;
 }
