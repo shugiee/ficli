@@ -124,6 +124,10 @@ make clean    # clean build artifacts
 - [x] Enforce a minimum window width and height. Show a full-screen message if window is too small, giving dimensions.
 - [x] Show total progress towards budget in Budget view, with a progress bar that indicates expected progress for the current date ([plan](../.claude/plans/budget-total-progress-expected-progress-bar.md))
 - [x] Support importing from QIF ([plan](../.claude/plans/qif-import.md))
+- [ ] Keep cursor on edited transaction when categorizing, including when applying category changes to multiple transactions at once
+- [ ] Allow filtering transactions list using regex
+- [ ] Allow mass-renaming payee after filtering transactions list
+- [x] Allow uncategorizing transactions in `e` or `c` mode ([plan](../.claude/plans/uncategorize-transaction-edit.md))
 - [ ] Allow scrolling through transactions list when filtered
 - [ ] Summary/report views
 - [ ] Add investment purchases/sales with cost basis tracking

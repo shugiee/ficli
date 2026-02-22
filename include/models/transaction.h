@@ -15,7 +15,7 @@ typedef struct {
     int64_t amount_cents;
     transaction_type_t type;
     int64_t account_id;
-    int64_t category_id;    // 0 if no category (transfers)
+    int64_t category_id;    // 0 if uncategorized
     char date[11];          // "YYYY-MM-DD\0"
     char reflection_date[11]; // "" when not set; otherwise "YYYY-MM-DD\0"
     char payee[128];
