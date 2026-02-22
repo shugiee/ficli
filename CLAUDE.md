@@ -127,8 +127,9 @@ make clean    # clean build artifacts
 - [x] Keep cursor on edited transaction when categorizing, including when applying category changes to multiple transactions at once ([plan](../.claude/plans/keep-cursor-on-categorize-bulk.md))
 - [x] Allow uncategorizing transactions in `e` or `c` mode ([plan](../.claude/plans/uncategorize-transaction-edit.md))
 - [x] Allow mass-renaming payee after filtering transactions list ([plan](../.claude/plans/mass-rename-payee-filtered-list.md))
+- [x] Make QIF import include categorization. Prompt user to create new category, assign to other category, or leave uncategorized when QIF transaction has a category that doesn't exist in the app yet. (Also applies category fields from CSV imports.) ([plan](../.claude/plans/import-category-qif-csv.md))
+- [ ] Allow user to focus and edit transactions in budget view
 - [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
-- [ ] Allow scrolling through transactions list when filtered
 - [ ] Summary/report views
 - [ ] Add investment purchases/sales with cost basis tracking
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization

@@ -4,6 +4,7 @@
 #include "models/transaction.h"
 
 #include <sqlite3.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef enum {
@@ -19,6 +20,9 @@ typedef struct {
     transaction_type_t type;
     char payee[128];
     char description[256];
+    char category[64];
+    bool has_category;
+    int64_t category_id;
     char card_last4[5];
 } csv_row_t;
 

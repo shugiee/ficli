@@ -201,6 +201,32 @@ static void strip_eol(char *line) {
         line[--len] = '\0';
 }
 
+static void trim_whitespace_in_place(char *s) {
+    if (!s)
+        return;
+
+    int len = (int)strlen(s);
+    int start = 0;
+    while (start < len && isspace((unsigned char)s[start]))
+        start++;
+
+    int end = len;
+    while (end > start && isspace((unsigned char)s[end - 1]))
+        end--;
+
+    if (start > 0)
+        memmove(s, s + start, (size_t)(end - start));
+    s[end - start] = '\0';
+}
+
+static bool copy_import_category(const char *src, char *dst, size_t dst_sz) {
+    if (!src || !dst || dst_sz == 0)
+        return false;
+    snprintf(dst, dst_sz, "%s", src);
+    trim_whitespace_in_place(dst);
+    return dst[0] != '\0';
+}
+
 static bool ensure_result_capacity(csv_parse_result_t *result, int *capacity) {
     if (result->row_count < *capacity)
         return true;
@@ -237,6 +263,7 @@ static csv_parse_result_t csv_parse_stream(FILE *f) {
     int col_date = -1, col_card = -1;
     int col_debit = -1, col_credit = -1;
     int col_amount = -1, col_txn_type = -1, col_desc = -1, col_txn_desc = -1;
+    int col_category = -1;
 
     for (int i = 0; i < ncols; i++) {
         char norm[128];
@@ -267,6 +294,10 @@ static csv_parse_result_t csv_parse_stream(FILE *f) {
                     strcmp(norm, "memo") == 0 || strcmp(norm, "payee") == 0 ||
                     strcmp(norm, "merchant") == 0)) {
             col_desc = i;
+        } else if (col_category < 0 &&
+                   (strcmp(norm, "category") == 0 ||
+                    strcmp(norm, "transaction category") == 0)) {
+            col_category = i;
         }
     }
 
@@ -324,6 +355,11 @@ static csv_parse_result_t csv_parse_stream(FILE *f) {
                 snprintf(row->payee, sizeof(row->payee), "%s", row_fields[col_txn_desc]);
             else if (col_desc >= 0 && col_desc < rnc)
                 snprintf(row->payee, sizeof(row->payee), "%s", row_fields[col_desc]);
+        }
+
+        if (col_category >= 0 && col_category < rnc) {
+            row->has_category = copy_import_category(
+                row_fields[col_category], row->category, sizeof(row->category));
         }
 
         if (result.type == CSV_TYPE_CREDIT_CARD) {
@@ -420,6 +456,7 @@ static csv_parse_result_t qif_parse_stream(FILE *f) {
     char txn_amount[64] = "";
     char txn_payee[128] = "";
     char txn_memo[256] = "";
+    char txn_category[64] = "";
 
     while (fgets(line, sizeof(line), f)) {
         strip_eol(line);
@@ -478,6 +515,11 @@ static csv_parse_result_t qif_parse_stream(FILE *f) {
                     snprintf(row->payee, sizeof(row->payee), "%s", txn_payee);
                     snprintf(row->description, sizeof(row->description), "%s",
                              txn_memo);
+                    if (copy_import_category(txn_category, row->category,
+                                             sizeof(row->category)) &&
+                        row->category[0] != '[') {
+                        row->has_category = true;
+                    }
                     result.row_count++;
 
                     if (active_account[0] != '\0') {
@@ -495,6 +537,7 @@ static csv_parse_result_t qif_parse_stream(FILE *f) {
             txn_amount[0] = '\0';
             txn_payee[0] = '\0';
             txn_memo[0] = '\0';
+            txn_category[0] = '\0';
             continue;
         }
 
@@ -510,6 +553,9 @@ static csv_parse_result_t qif_parse_stream(FILE *f) {
             break;
         case 'M':
             snprintf(txn_memo, sizeof(txn_memo), "%s", line + 1);
+            break;
+        case 'L':
+            snprintf(txn_category, sizeof(txn_category), "%s", line + 1);
             break;
         default:
             break;
@@ -702,10 +748,14 @@ int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
-        if (db_get_most_recent_category_for_payee(
-                db, account_id, row->payee, row->type, &txn.category_id) < 0) {
-            ret = -1;
-            goto cleanup;
+        if (row->has_category) {
+            txn.category_id = row->category_id;
+        } else {
+            if (db_get_most_recent_category_for_payee(
+                    db, account_id, row->payee, row->type, &txn.category_id) < 0) {
+                ret = -1;
+                goto cleanup;
+            }
         }
 
         if (db_insert_transaction(db, &txn) < 0) {
@@ -766,10 +816,14 @@ int csv_import_checking(sqlite3 *db, const csv_parse_result_t *r,
         txn.account_id = account_id;
         snprintf(txn.date, sizeof(txn.date), "%s", row->date);
         snprintf(txn.payee, sizeof(txn.payee), "%s", row->payee);
-        if (db_get_most_recent_category_for_payee(
-                db, account_id, row->payee, row->type, &txn.category_id) < 0) {
-            ret = -1;
-            break;
+        if (row->has_category) {
+            txn.category_id = row->category_id;
+        } else {
+            if (db_get_most_recent_category_for_payee(
+                    db, account_id, row->payee, row->type, &txn.category_id) < 0) {
+                ret = -1;
+                break;
+            }
         }
 
         if (db_insert_transaction(db, &txn) < 0) {
