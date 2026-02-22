@@ -4,6 +4,7 @@
 #include "ui/colors.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,12 @@ struct budget_list_state {
 
     char message[128];
     bool dirty;
+
+    int64_t total_budget_cents;
+    int64_t total_spent_cents;
+    int total_utilization_bps;
+    int expected_bps;
+    bool has_total_budget;
 };
 
 static void set_current_month(char out[8]) {
@@ -80,6 +87,119 @@ static bool month_shift(char month[8], int delta) {
     if (strftime(month, 8, "%Y-%m", &tmv) != 7)
         return false;
     return true;
+}
+
+static int compare_month_ym(const char *lhs, const char *rhs) {
+    int lhs_y = 0, lhs_m = 0, rhs_y = 0, rhs_m = 0;
+    if (!parse_month_ym(lhs, &lhs_y, &lhs_m))
+        return 0;
+    if (!parse_month_ym(rhs, &rhs_y, &rhs_m))
+        return 0;
+    if (lhs_y != rhs_y)
+        return (lhs_y < rhs_y) ? -1 : 1;
+    if (lhs_m != rhs_m)
+        return (lhs_m < rhs_m) ? -1 : 1;
+    return 0;
+}
+
+static int days_in_month(int year, int month) {
+    if (year < 1900 || month < 1 || month > 12)
+        return 30;
+
+    struct tm tmv = {0};
+    tmv.tm_year = year - 1900;
+    tmv.tm_mon = month;
+    tmv.tm_mday = 0;
+    tmv.tm_hour = 12;
+    tmv.tm_isdst = -1;
+    if (mktime(&tmv) == (time_t)-1)
+        return 30;
+    if (tmv.tm_mday < 28 || tmv.tm_mday > 31)
+        return 30;
+    return tmv.tm_mday;
+}
+
+static int compute_expected_bps_for_view_month(const char *view_month) {
+    if (!view_month)
+        return 0;
+
+    char current_month[8];
+    set_current_month(current_month);
+
+    int cmp = compare_month_ym(view_month, current_month);
+    if (cmp < 0)
+        return 10000;
+    if (cmp > 0)
+        return 0;
+
+    time_t now = time(NULL);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+
+    int dim = days_in_month(tmv.tm_year + 1900, tmv.tm_mon + 1);
+    if (dim <= 0)
+        return 0;
+    if (tmv.tm_mday < 1)
+        return 0;
+    if (tmv.tm_mday >= dim)
+        return 10000;
+
+    int64_t bps = ((int64_t)tmv.tm_mday * 10000) / dim;
+    if (bps < 0)
+        bps = 0;
+    if (bps > 10000)
+        bps = 10000;
+    return (int)bps;
+}
+
+static void compute_total_progress_summary(budget_list_state_t *ls) {
+    if (!ls)
+        return;
+
+    ls->total_budget_cents = 0;
+    ls->total_spent_cents = 0;
+    ls->total_utilization_bps = -1;
+    ls->has_total_budget = false;
+    ls->expected_bps = compute_expected_bps_for_view_month(ls->month);
+
+    for (int i = 0; i < ls->row_count; i++) {
+        budget_display_row_t *drow = &ls->rows[i];
+        if (!drow->is_parent || !drow->row.has_rule || drow->row.limit_cents <= 0)
+            continue;
+
+        int64_t spent = drow->row.net_spent_cents;
+        if (spent < 0)
+            spent = 0;
+
+        ls->has_total_budget = true;
+        if (ls->total_budget_cents <= INT64_MAX - drow->row.limit_cents)
+            ls->total_budget_cents += drow->row.limit_cents;
+        else
+            ls->total_budget_cents = INT64_MAX;
+
+        if (ls->total_spent_cents <= INT64_MAX - spent)
+            ls->total_spent_cents += spent;
+        else
+            ls->total_spent_cents = INT64_MAX;
+    }
+
+    if (!ls->has_total_budget || ls->total_budget_cents <= 0) {
+        ls->has_total_budget = false;
+        ls->total_budget_cents = 0;
+        ls->total_spent_cents = 0;
+        ls->total_utilization_bps = -1;
+        return;
+    }
+
+    if (ls->total_spent_cents > INT64_MAX / 10000) {
+        ls->total_utilization_bps = INT_MAX;
+        return;
+    }
+
+    int64_t util = (ls->total_spent_cents * 10000) / ls->total_budget_cents;
+    if (util > INT_MAX)
+        util = INT_MAX;
+    ls->total_utilization_bps = (int)util;
 }
 
 static void format_cents_plain(int64_t cents, bool show_plus, char *buf, int n) {
@@ -220,6 +340,12 @@ static void reload_rows(budget_list_state_t *ls) {
     if (!ls)
         return;
 
+    ls->total_budget_cents = 0;
+    ls->total_spent_cents = 0;
+    ls->total_utilization_bps = -1;
+    ls->has_total_budget = false;
+    ls->expected_bps = compute_expected_bps_for_view_month(ls->month);
+
     free(ls->rows);
     ls->rows = NULL;
     ls->row_count = 0;
@@ -255,6 +381,7 @@ static void reload_rows(budget_list_state_t *ls) {
     }
 
     free(parents);
+    compute_total_progress_summary(ls);
 
     if (ls->row_count <= 0) {
         ls->cursor = 0;
@@ -381,6 +508,151 @@ static void draw_bar(WINDOW *win, int row, int col, int width,
             mvwaddstr(win, row, col + i, bar_fill);
         wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
     }
+}
+
+static void draw_total_bar_with_expected(WINDOW *win, int row, int col, int width,
+                                         int util_bps, int expected_bps) {
+    if (!win || width <= 0)
+        return;
+
+    static const char *bar_fill = "◼";
+    const int max_bps = 15000;
+    const int warn_bps = 10000;
+    const int danger_bps = 12500;
+
+    for (int i = 0; i < width; i++)
+        mvwaddch(win, row, col + i, ' ');
+
+    if (util_bps >= 0) {
+        int clamped_util = util_bps;
+        if (clamped_util > max_bps)
+            clamped_util = max_bps;
+
+        int green_bps = clamped_util < warn_bps ? clamped_util : warn_bps;
+        int yellow_bps = clamped_util < danger_bps ? clamped_util : danger_bps;
+        int red_bps = clamped_util;
+
+        int green_cols =
+            (int)(((int64_t)green_bps * width + max_bps - 1) / max_bps);
+        int yellow_cols =
+            (int)(((int64_t)yellow_bps * width + max_bps - 1) / max_bps);
+        int red_cols = (int)(((int64_t)red_bps * width + max_bps - 1) / max_bps);
+
+        if (green_bps <= 0)
+            green_cols = 0;
+        if (yellow_bps <= 0)
+            yellow_cols = 0;
+        if (red_bps <= 0)
+            red_cols = 0;
+
+        if (green_cols > width)
+            green_cols = width;
+        if (yellow_cols > width)
+            yellow_cols = width;
+        if (red_cols > width)
+            red_cols = width;
+        if (yellow_cols < green_cols)
+            yellow_cols = green_cols;
+        if (red_cols < yellow_cols)
+            red_cols = yellow_cols;
+
+        if (green_cols > 0) {
+            wattron(win, COLOR_PAIR(COLOR_INCOME));
+            for (int i = 0; i < green_cols; i++)
+                mvwaddstr(win, row, col + i, bar_fill);
+            wattroff(win, COLOR_PAIR(COLOR_INCOME));
+        }
+
+        if (yellow_cols > green_cols) {
+            wattron(win, COLOR_PAIR(COLOR_WARNING));
+            for (int i = green_cols; i < yellow_cols; i++)
+                mvwaddstr(win, row, col + i, bar_fill);
+            wattroff(win, COLOR_PAIR(COLOR_WARNING));
+        }
+
+        if (red_cols > yellow_cols) {
+            wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+            for (int i = yellow_cols; i < red_cols; i++)
+                mvwaddstr(win, row, col + i, bar_fill);
+            wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+        }
+    }
+
+    int clamped_expected = expected_bps;
+    if (clamped_expected < 0)
+        clamped_expected = 0;
+    if (clamped_expected > 10000)
+        clamped_expected = 10000;
+    int marker_col =
+        (int)(((int64_t)clamped_expected * width + max_bps - 1) / max_bps);
+    if (marker_col < 0)
+        marker_col = 0;
+    if (marker_col >= width)
+        marker_col = width - 1;
+
+    wattron(win, COLOR_PAIR(COLOR_INFO));
+    wattron(win, A_BOLD);
+    mvwaddch(win, row, col + marker_col, '|');
+    wattroff(win, A_BOLD);
+    wattroff(win, COLOR_PAIR(COLOR_INFO));
+}
+
+static void draw_total_bar_axis_labels(WINDOW *win, int row, int col, int width) {
+    if (!win || width <= 0)
+        return;
+
+    const int max_bps = 15000;
+    int zero_col = col;
+    int hundred_col = col + (int)(((int64_t)10000 * width + max_bps - 1) / max_bps) - 2;
+    int onefifty_col = col + width - 4;
+
+    if (hundred_col < col)
+        hundred_col = col;
+    if (hundred_col > col + width - 4)
+        hundred_col = col + width - 4;
+    if (onefifty_col < col)
+        onefifty_col = col;
+
+    mvwprintw(win, row, col, "%-*s", width, "");
+    mvwprintw(win, row, zero_col, "0%%");
+    if (width >= 12)
+        mvwprintw(win, row, hundred_col, "100%%");
+    mvwprintw(win, row, onefifty_col, "150%%");
+}
+
+static void draw_expected_marker_label(WINDOW *win, int row, int col, int width,
+                                       int expected_bps) {
+    if (!win || width <= 0)
+        return;
+
+    const int max_bps = 15000;
+    int clamped_expected = expected_bps;
+    if (clamped_expected < 0)
+        clamped_expected = 0;
+    if (clamped_expected > 10000)
+        clamped_expected = 10000;
+
+    int marker_offset =
+        (int)(((int64_t)clamped_expected * width + max_bps - 1) / max_bps);
+    if (marker_offset < 0)
+        marker_offset = 0;
+    if (marker_offset >= width)
+        marker_offset = width - 1;
+
+    const char *label = "Expected";
+    int label_len = (int)strlen(label);
+    int label_col = col + marker_offset - (label_len / 2);
+    if (label_col < col)
+        label_col = col;
+    if (label_col + label_len > col + width)
+        label_col = col + width - label_len;
+    if (label_col < col)
+        label_col = col;
+
+    mvwprintw(win, row, col, "%-*s", width, "");
+    wattron(win, COLOR_PAIR(COLOR_INFO));
+    mvwprintw(win, row, label_col, "%s", label);
+    wattroff(win, COLOR_PAIR(COLOR_INFO));
 }
 
 static void format_related_amount(const budget_txn_row_t *txn, char *buf, int n) {
@@ -562,7 +834,7 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
 
     int h, w;
     getmaxyx(win, h, w);
-    if (h < 7 || w < 44) {
+    if (h < 13 || w < 44) {
         mvwprintw(win, 1, 2, "Window too small for Budgets");
         curs_set(0);
         return;
@@ -570,9 +842,13 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
 
     int title_row = 1;
     int msg_row = 2;
-    int header_row = 4;
-    int rule_row = 5;
-    int data_row_start = 6;
+    int summary_row = 3;
+    int progress_label_row = 5;
+    int progress_row = 6;
+    int progress_axis_row = 7;
+    int header_row = 10;
+    int rule_row = 11;
+    int data_row_start = 12;
 
     mvwprintw(win, title_row, 2, "Budgets  Month:%s", ls->month);
     const char *title_hint = ls->edit_mode ? "Enter:Save Esc:Cancel"
@@ -590,6 +866,52 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
     int avail = w - 4;
     if (avail < 20)
         return;
+
+    mvwprintw(win, summary_row, left, "%-*s", avail, "");
+    if (ls->has_total_budget) {
+        char spent_str[24];
+        char budget_str[24];
+        format_cents_plain(ls->total_spent_cents, false, spent_str,
+                           sizeof(spent_str));
+        format_cents_plain(ls->total_budget_cents, false, budget_str,
+                           sizeof(budget_str));
+
+        int util_whole = ls->total_utilization_bps / 100;
+        int util_frac = (ls->total_utilization_bps % 100) / 10;
+        int expected_whole = ls->expected_bps / 100;
+        int expected_frac = (ls->expected_bps % 100) / 10;
+
+        char summary[256];
+        snprintf(summary, sizeof(summary),
+                 "Total: %s / %s  %d.%d%%  Expected: %d.%d%%", spent_str,
+                 budget_str, util_whole, util_frac, expected_whole,
+                 expected_frac);
+        mvwprintw(win, summary_row, left, "%-*.*s", avail, avail, summary);
+    } else {
+        mvwprintw(win, summary_row, left, "%-*.*s", avail, avail,
+                  "Total: -- (no parent budget limits)");
+    }
+
+    mvwprintw(win, progress_row, left, "%-*s", avail, "");
+    mvwprintw(win, progress_label_row, left, "%-*s", avail, "");
+    mvwprintw(win, progress_axis_row, left, "%-*s", avail, "");
+    int progress_label_w = 9;
+    int progress_bar_col = left + progress_label_w + 1;
+    int progress_bar_w = avail - progress_label_w - 1;
+
+    mvwprintw(win, progress_row, left, "%-*s", progress_label_w, "Progress");
+    if (ls->has_total_budget && progress_bar_w >= 10) {
+        draw_expected_marker_label(win, progress_label_row, progress_bar_col,
+                                   progress_bar_w, ls->expected_bps);
+        draw_total_bar_with_expected(win, progress_row, progress_bar_col,
+                                     progress_bar_w, ls->total_utilization_bps,
+                                     ls->expected_bps);
+        draw_total_bar_axis_labels(win, progress_axis_row, progress_bar_col,
+                                   progress_bar_w);
+    } else if (progress_bar_w >= 10) {
+        mvwprintw(win, progress_row, progress_bar_col, "%-*s", progress_bar_w,
+                  "(no parent budget limits)");
+    }
 
     int budget_w = 12;
     int net_w = 12;
