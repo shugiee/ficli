@@ -20,6 +20,8 @@
 
 #define SIDEBAR_WIDTH 18
 #define RESIZE_DEBOUNCE_MS 60
+#define MIN_TERM_COLS 80
+#define MIN_TERM_ROWS 24
 
 typedef struct {
     const char *label;
@@ -48,6 +50,9 @@ static struct {
     category_list_state_t *category_list;
     budget_list_state_t *budget_list;
     bool dark_mode;
+    bool layout_ready;
+    int layout_rows;
+    int layout_cols;
 } state;
 
 typedef struct {
@@ -272,9 +277,15 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_WARNING, CUST_YELLOW, CUST_BG);
 }
 
-static void ui_create_layout(void) {
+static bool ui_size_is_supported(int rows, int cols) {
+    return rows >= MIN_TERM_ROWS && cols >= MIN_TERM_COLS;
+}
+
+static bool ui_create_layout(void) {
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
+    if (!ui_size_is_supported(rows, cols))
+        return false;
 
     int content_h = rows - 2; // minus header and status
     int content_w = cols - SIDEBAR_WIDTH;
@@ -283,17 +294,80 @@ static void ui_create_layout(void) {
     state.sidebar = newwin(content_h, SIDEBAR_WIDTH, 1, 0);
     state.content = newwin(content_h, content_w, 1, SIDEBAR_WIDTH);
     state.status = newwin(1, cols, rows - 1, 0);
+    if (!state.header || !state.sidebar || !state.content || !state.status) {
+        if (state.header) {
+            delwin(state.header);
+            state.header = NULL;
+        }
+        if (state.sidebar) {
+            delwin(state.sidebar);
+            state.sidebar = NULL;
+        }
+        if (state.content) {
+            delwin(state.content);
+            state.content = NULL;
+        }
+        if (state.status) {
+            delwin(state.status);
+            state.status = NULL;
+        }
+        return false;
+    }
 
     wbkgd(stdscr, COLOR_PAIR(COLOR_NORMAL));
+    wbkgd(state.header, COLOR_PAIR(COLOR_HEADER));
     wbkgd(state.sidebar, COLOR_PAIR(COLOR_NORMAL));
     wbkgd(state.content, COLOR_PAIR(COLOR_NORMAL));
+    wbkgd(state.status, COLOR_PAIR(COLOR_STATUS));
+    state.layout_ready = true;
+    state.layout_rows = rows;
+    state.layout_cols = cols;
+    return true;
 }
 
 static void ui_destroy_layout(void) {
-    delwin(state.header);
-    delwin(state.sidebar);
-    delwin(state.content);
-    delwin(state.status);
+    if (state.header) {
+        delwin(state.header);
+        state.header = NULL;
+    }
+    if (state.sidebar) {
+        delwin(state.sidebar);
+        state.sidebar = NULL;
+    }
+    if (state.content) {
+        delwin(state.content);
+        state.content = NULL;
+    }
+    if (state.status) {
+        delwin(state.status);
+        state.status = NULL;
+    }
+    state.layout_ready = false;
+    state.layout_rows = 0;
+    state.layout_cols = 0;
+}
+
+static void ui_sync_layout_to_terminal(void) {
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    if (!ui_size_is_supported(rows, cols)) {
+        if (state.layout_ready) {
+            ui_destroy_layout();
+            clearok(stdscr, TRUE);
+        }
+        return;
+    }
+
+    bool needs_rebuild =
+        !state.layout_ready || rows != state.layout_rows || cols != state.layout_cols;
+    if (!needs_rebuild)
+        return;
+
+    if (state.layout_ready)
+        ui_destroy_layout();
+    if (ui_create_layout())
+        clearok(stdscr, TRUE);
 }
 
 static void ui_handle_resize_event(void) {
@@ -313,12 +387,68 @@ static void ui_handle_resize_event(void) {
     }
     timeout(-1);
 
-    ui_destroy_layout();
-    ui_create_layout();
-    clearok(stdscr, TRUE);
+    ui_sync_layout_to_terminal();
 
     if (next != ERR)
         (void)ungetch(next);
+}
+
+static void ui_draw_centered_line(int row, const char *text) {
+    if (!text)
+        return;
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    if (row < 0 || row >= rows || cols <= 0)
+        return;
+
+    int len = (int)strlen(text);
+    int col = (cols - len) / 2;
+    if (col < 0)
+        col = 0;
+    mvaddnstr(row, col, text, cols - col);
+}
+
+static void ui_draw_too_small_screen(void) {
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    char current[64];
+    char required[64];
+    snprintf(current, sizeof(current), "Current: %dx%d", cols, rows);
+    snprintf(required, sizeof(required), "Required: %dx%d", MIN_TERM_COLS,
+             MIN_TERM_ROWS);
+
+    const char *title = "Window too small";
+    const char *hint = "Resize terminal to continue  |  q:Quit";
+
+    int base_row = rows / 2 - 2;
+    if (base_row < 0)
+        base_row = 0;
+
+    werase(stdscr);
+    wbkgd(stdscr, COLOR_PAIR(COLOR_NORMAL));
+    curs_set(0);
+
+    wattron(stdscr, COLOR_PAIR(COLOR_WARNING) | A_BOLD);
+    ui_draw_centered_line(base_row, title);
+    wattroff(stdscr, COLOR_PAIR(COLOR_WARNING) | A_BOLD);
+
+    ui_draw_centered_line(base_row + 2, current);
+    ui_draw_centered_line(base_row + 3, required);
+    ui_draw_centered_line(base_row + 5, hint);
+
+    wnoutrefresh(stdscr);
+    doupdate();
+}
+
+static void ui_touch_layout_windows(void) {
+    if (!state.layout_ready)
+        return;
+    touchwin(state.header);
+    touchwin(state.sidebar);
+    touchwin(state.content);
+    touchwin(state.status);
 }
 
 static void ui_draw_header(void) {
@@ -418,6 +548,8 @@ static void ui_draw_status(void) {
 }
 
 static void ui_draw_all(void) {
+    if (!state.layout_ready)
+        return;
     ui_draw_header();
     ui_draw_sidebar();
     ui_draw_content();
@@ -524,10 +656,7 @@ static void ui_show_help(void) {
     }
 
     delwin(w);
-    touchwin(state.header);
-    touchwin(state.sidebar);
-    touchwin(state.content);
-    touchwin(state.status);
+    ui_touch_layout_windows();
 }
 
 static void ui_handle_input(int ch) {
@@ -615,10 +744,7 @@ static void ui_handle_input(int ch) {
         if (res == FORM_SAVED && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
     }
-        touchwin(state.header);
-        touchwin(state.sidebar);
-        touchwin(state.content);
-        touchwin(state.status);
+        ui_touch_layout_windows();
         break;
     case 'i': {
         int64_t acct_id = state.txn_list
@@ -629,10 +755,7 @@ static void ui_handle_input(int ch) {
             txn_list_mark_dirty(state.txn_list);
         if (n > 0 && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
-        touchwin(state.header);
-        touchwin(state.sidebar);
-        touchwin(state.content);
-        touchwin(state.status);
+        ui_touch_layout_windows();
     } break;
     case 't':
         state.dark_mode = !state.dark_mode;
@@ -640,12 +763,11 @@ static void ui_handle_input(int ch) {
         ui_save_theme_pref(state.dark_mode);
 
         wbkgd(stdscr, COLOR_PAIR(COLOR_NORMAL));
-        wbkgd(state.sidebar, COLOR_PAIR(COLOR_NORMAL));
-        wbkgd(state.content, COLOR_PAIR(COLOR_NORMAL));
-        touchwin(state.header);
-        touchwin(state.sidebar);
-        touchwin(state.content);
-        touchwin(state.status);
+        if (state.layout_ready) {
+            wbkgd(state.sidebar, COLOR_PAIR(COLOR_NORMAL));
+            wbkgd(state.content, COLOR_PAIR(COLOR_NORMAL));
+            ui_touch_layout_windows();
+        }
         break;
     case '?':
         ui_show_help();
@@ -693,11 +815,26 @@ void ui_run(sqlite3 *db) {
     state.account_list = NULL;
     state.category_list = NULL;
     state.budget_list = NULL;
+    state.layout_ready = false;
+    state.layout_rows = 0;
+    state.layout_cols = 0;
 
-    ui_create_layout();
+    ui_sync_layout_to_terminal();
     refresh(); // sync stdscr so getch() won't blank the screen
 
     while (state.running) {
+        ui_sync_layout_to_terminal();
+        if (!state.layout_ready) {
+            ui_draw_too_small_screen();
+            int ch = getch();
+            if (ch == 'q') {
+                state.running = false;
+            } else if (ch == KEY_RESIZE) {
+                ui_handle_resize_event();
+            }
+            continue;
+        }
+
         ui_draw_all();
         int ch = getch();
         ui_handle_input(ch);

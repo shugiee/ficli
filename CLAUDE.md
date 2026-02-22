@@ -122,6 +122,7 @@ make clean    # clean build artifacts
 - [x] Budget tracking ([plan](../.claude/plans/budget-tracking-v1.md))
 - [x] Show related transactions in Budget view on "Enter"; only edit on `e` ([plan](../.claude/plans/budget-related-transactions-on-enter.md))
 - [ ] Enforce a minimum window width and height. Show a full-screen message if window is too small, giving dimensions.
+- [ ] Show total progress towards budget in Budget view, with a progress bar that indicates expected progress for the current date
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
