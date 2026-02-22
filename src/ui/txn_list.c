@@ -85,6 +85,8 @@ struct txn_list_state {
     int cursor;
     int scroll_offset;
     int next_reload_cursor;
+    int64_t next_reload_focus_txn_id;
+    bool center_cursor_next_draw;
     bool dirty;
 };
 
@@ -151,6 +153,16 @@ static int64_t txn_list_template_id(const txn_list_state_t *ls) {
         return ls->selected_ids[0];
     }
     return current_id;
+}
+
+static int txn_list_display_index_by_id(const txn_list_state_t *ls, int64_t id) {
+    if (!ls || id <= 0 || !ls->display)
+        return -1;
+    for (int i = 0; i < ls->display_count; i++) {
+        if (ls->display[i].id == id)
+            return i;
+    }
+    return -1;
 }
 
 static bool txn_list_apply_template_to_selected(txn_list_state_t *ls,
@@ -738,7 +750,20 @@ static void reload(txn_list_state_t *ls) {
 
     ls->dirty = false;
     rebuild_display(ls);
+    if (ls->next_reload_focus_txn_id > 0) {
+        int idx =
+            txn_list_display_index_by_id(ls, ls->next_reload_focus_txn_id);
+        if (idx >= 0) {
+            ls->cursor = idx;
+            ls->center_cursor_next_draw = true;
+        }
+    }
+    if (ls->cursor < 0)
+        ls->cursor = 0;
+    if (ls->cursor >= ls->display_count)
+        ls->cursor = ls->display_count > 0 ? ls->display_count - 1 : 0;
     ls->next_reload_cursor = -1;
+    ls->next_reload_focus_txn_id = 0;
 }
 
 txn_list_state_t *txn_list_create(sqlite3 *db) {
@@ -749,6 +774,8 @@ txn_list_state_t *txn_list_create(sqlite3 *db) {
     ls->sort_col = SORT_DATE;
     ls->sort_asc = false;
     ls->next_reload_cursor = -1;
+    ls->next_reload_focus_txn_id = 0;
+    ls->center_cursor_next_draw = false;
     ls->dirty = true;
     return ls;
 }
@@ -990,6 +1017,7 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         visible_rows = 1;
 
     if (ls->display_count == 0) {
+        ls->center_cursor_next_draw = false;
         const char *msg =
             (ls->filter_len > 0) ? "No matches" : "No transactions";
         int mlen = (int)strlen(msg);
@@ -1007,6 +1035,19 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         ls->cursor = 0;
     if (ls->cursor >= ls->display_count)
         ls->cursor = ls->display_count - 1;
+
+    if (ls->center_cursor_next_draw) {
+        int max_offset = ls->display_count - visible_rows;
+        if (max_offset < 0)
+            max_offset = 0;
+        int target = ls->cursor - visible_rows / 2;
+        if (target < 0)
+            target = 0;
+        if (target > max_offset)
+            target = max_offset;
+        ls->scroll_offset = target;
+        ls->center_cursor_next_draw = false;
+    }
 
     if (ls->cursor < ls->scroll_offset)
         ls->scroll_offset = ls->cursor;
@@ -1223,6 +1264,7 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
                     txn_list_apply_template_to_selected(
                         ls, &txn, tmpl_id, to_account_id);
                     txn_list_clear_selected(ls);
+                    ls->next_reload_focus_txn_id = tmpl_id;
                     ls->dirty = true;
                 }
             } else {
@@ -1245,6 +1287,7 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
                     txn_list_apply_category_to_selected(
                         ls, tmpl_id, txn.category_id);
                     txn_list_clear_selected(ls);
+                    ls->next_reload_focus_txn_id = tmpl_id;
                     ls->dirty = true;
                 }
             } else if (rc != 0) {
@@ -1269,9 +1312,11 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
                 db_delete_transaction(ls->db, (int)ls->display[ls->cursor].id);
             if (rc == 0) {
                 ls->next_reload_cursor = delete_idx;
+                ls->next_reload_focus_txn_id = 0;
                 ls->dirty = true;
             } else if (rc == -2) {
                 ls->next_reload_cursor = delete_idx;
+                ls->next_reload_focus_txn_id = 0;
                 ls->dirty = true;
             }
         }

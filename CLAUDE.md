@@ -124,16 +124,17 @@ make clean    # clean build artifacts
 - [x] Enforce a minimum window width and height. Show a full-screen message if window is too small, giving dimensions.
 - [x] Show total progress towards budget in Budget view, with a progress bar that indicates expected progress for the current date ([plan](../.claude/plans/budget-total-progress-expected-progress-bar.md))
 - [x] Support importing from QIF ([plan](../.claude/plans/qif-import.md))
-- [ ] Keep cursor on edited transaction when categorizing, including when applying category changes to multiple transactions at once
-- [ ] Allow filtering transactions list using regex
-- [ ] Allow mass-renaming payee after filtering transactions list
+- [x] Keep cursor on edited transaction when categorizing, including when applying category changes to multiple transactions at once ([plan](../.claude/plans/keep-cursor-on-categorize-bulk.md))
 - [x] Allow uncategorizing transactions in `e` or `c` mode ([plan](../.claude/plans/uncategorize-transaction-edit.md))
+- [ ] Allow mass-renaming payee after filtering transactions list
+- [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
 - [ ] Allow scrolling through transactions list when filtered
 - [ ] Summary/report views
 - [ ] Add investment purchases/sales with cost basis tracking
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Offer to auto-create accounts when importing transactions with an account that doesn't exist yet
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
+- [ ] Allow filtering transactions list using regex
 - [ ] Allow archiving accounts
 - [ ] Support CSV imports for investment accounts
 - [ ] Data export (CSV)
