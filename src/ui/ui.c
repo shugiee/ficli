@@ -64,7 +64,7 @@ static const help_row_t help_rows[] = {
     {NULL, "Global"},
     {"q", "Quit"},
     {"a", "Add transaction"},
-    {"i", "Import CSV"},
+    {"i", "Import file"},
     {"t", "Toggle theme"},
     {"?", "This help"},
 

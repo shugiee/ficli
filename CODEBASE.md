@@ -10,12 +10,12 @@ Quick-reference for the current state of every file, its role, and key implement
 |------|---------|
 | `src/main.c` (29 lines) | Builds DB path (`~/.local/share/ficli/ficli.db`), calls `db_init()`, `ui_init()`, `ui_run()`, `ui_cleanup()`, `db_close()`. No business logic here. |
 
-### CSV Import Layer (`csv/`)
+### Import Layer (`csv/`)
 
 | File | Purpose |
 |------|---------|
-| `include/csv/csv_import.h` | Types (`csv_type_t`, `csv_row_t`, `csv_parse_result_t`) and API (`csv_parse_file`, `csv_parse_result_free`, `csv_import_credit_card`, `csv_import_checking`) |
-| `src/csv/csv_import.c` | Parses CSV files into `csv_parse_result_t`. Detects CC vs checking/savings by presence of a "card" column. Helpers: `csv_parse_line` (quoted-field parser), `normalize_col` (lowercase+trim), `normalize_date` (MM/DD/YYYY or YYYY-MM-DD → YYYY-MM-DD), `parse_csv_amount` (strips $, commas, handles negatives/parens), `extract_last4`. Import functions call `db_insert_transaction()` for each row; CC import matches `card_last4` to CREDIT_CARD accounts. |
+| `include/csv/csv_import.h` | Types (`csv_type_t`, `csv_row_t`, `csv_parse_result_t`) and API (`csv_parse_file`, `csv_parse_result_free`, `csv_import_credit_card`, `csv_import_checking`) for CSV/QIF inputs |
+| `src/csv/csv_import.c` | Parses CSV and QIF into `csv_parse_result_t` (auto-detected by file content). CSV detects CC vs checking/savings by presence of a "card" column. QIF supports `!Type:CCard/Bank/Cash` transaction blocks and account metadata for preselection. Helpers: `csv_parse_line` (quoted-field parser), `normalize_col` (lowercase+trim), `normalize_date` (CSV + QIF date formats → YYYY-MM-DD), `parse_csv_amount` (strips $, commas, handles negatives/parens), `extract_last4`. Import functions call `db_insert_transaction()` for each row; CC CSV import matches `card_last4` to CREDIT_CARD accounts. |
 
 ### Database Layer (`db/`)
 

@@ -27,7 +27,7 @@ A terminal-based personal finance app for tracking expenses, income, and transfe
 - Account management UI (add/edit/delete) with account types and credit-card last4
 - Category management UI (add/edit/delete), including parent/child categories (`Parent:Child`)
 - Budget tracking UI with parent-category rollups, child spend detail, month navigation, and effective-month budget rules
-- CSV import flows for credit card and checking/savings statements with deduplication
+- CSV/QIF import flows for credit card and checking/savings statements with deduplication
 - Account summaries and 90-day balance chart in Transactions view
 - Theme toggle (`t`) with persisted preference
 - Resize-aware layout handling and in-app keyboard shortcut reference (`?`)
@@ -123,7 +123,10 @@ make clean    # clean build artifacts
 - [x] Show related transactions in Budget view on "Enter"; only edit on `e` ([plan](../.claude/plans/budget-related-transactions-on-enter.md))
 - [x] Enforce a minimum window width and height. Show a full-screen message if window is too small, giving dimensions.
 - [x] Show total progress towards budget in Budget view, with a progress bar that indicates expected progress for the current date ([plan](../.claude/plans/budget-total-progress-expected-progress-bar.md))
+- [x] Support importing from QIF ([plan](../.claude/plans/qif-import.md))
+- [ ] Allow scrolling through transactions list when filtered
 - [ ] Summary/report views
+- [ ] Add investment purchases/sales with cost basis tracking
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Offer to auto-create accounts when importing transactions with an account that doesn't exist yet
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
@@ -133,7 +136,6 @@ make clean    # clean build artifacts
 - [ ] Support split transactions
 - [ ] Add row indices to transaction list
 - [ ] Add undo logic
-- [ ] Add investment purchases/sales with cost basis tracking
 - [ ] When deleting a category, offer to reassign transactions to another category
 - [ ] Add reconciliation
 - [ ] Add password protection and encryption

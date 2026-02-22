@@ -3,9 +3,11 @@
 #include "models/account.h"
 #include "models/transaction.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define MAX_COLS 32
 #define LINE_BUF 4096
@@ -78,42 +80,53 @@ static void normalize_col(const char *src, char *dst, int dstlen) {
 }
 
 // Normalize date to YYYY-MM-DD. Handles MM/DD/YYYY, MM/DD/YY, and
-// YYYY-MM-DD input.
+// YYYY-MM-DD input, and also QIF style M/D'YY.
 // Returns true on success, false if format unrecognized.
 static bool normalize_date(const char *src, char *dst) {
-    int len = (int)strlen(src);
-    if (len == 10 && src[2] == '/' && src[5] == '/') {
-        // MM/DD/YYYY → YYYY-MM-DD
-        dst[0] = src[6]; dst[1] = src[7]; dst[2] = src[8]; dst[3] = src[9];
-        dst[4] = '-';
-        dst[5] = src[0]; dst[6] = src[1];
-        dst[7] = '-';
-        dst[8] = src[3]; dst[9] = src[4];
-        dst[10] = '\0';
-        return true;
+    if (!src || !dst)
+        return false;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", src);
+
+    // Trim surrounding whitespace
+    char *start = buf;
+    while (*start && isspace((unsigned char)*start))
+        start++;
+    char *end = start + strlen(start);
+    while (end > start && isspace((unsigned char)*(end - 1)))
+        *(--end) = '\0';
+
+    int y = 0, m = 0, d = 0;
+    int len = (int)strlen(start);
+    if (len == 10 && start[4] == '-' && start[7] == '-') {
+        if (sscanf(start, "%4d-%2d-%2d", &y, &m, &d) != 3)
+            return false;
+    } else {
+        char trailing = '\0';
+        if (sscanf(start, "%d/%d/%d%c", &m, &d, &y, &trailing) != 3 &&
+            sscanf(start, "%d/%d'%d%c", &m, &d, &y, &trailing) != 3) {
+            return false;
+        }
+        if (y < 100)
+            y += (y >= 70) ? 1900 : 2000;
     }
-    if (len == 10 && src[4] == '-' && src[7] == '-') {
-        // Already YYYY-MM-DD
-        memcpy(dst, src, 10);
-        dst[10] = '\0';
-        return true;
-    }
-    if (len == 8 && src[2] == '/' && src[5] == '/') {
-        // MM/DD/YY -> 20YY-MM-DD
-        dst[0] = '2';
-        dst[1] = '0';
-        dst[2] = src[6];
-        dst[3] = src[7];
-        dst[4] = '-';
-        dst[5] = src[0];
-        dst[6] = src[1];
-        dst[7] = '-';
-        dst[8] = src[3];
-        dst[9] = src[4];
-        dst[10] = '\0';
-        return true;
-    }
-    return false;
+
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1900)
+        return false;
+
+    struct tm tmv = {0};
+    tmv.tm_year = y - 1900;
+    tmv.tm_mon = m - 1;
+    tmv.tm_mday = d;
+    tmv.tm_hour = 12;
+    tmv.tm_isdst = -1;
+    if (mktime(&tmv) == (time_t)-1)
+        return false;
+    if (tmv.tm_year != y - 1900 || tmv.tm_mon != m - 1 || tmv.tm_mday != d)
+        return false;
+
+    return strftime(dst, 11, "%Y-%m-%d", &tmv) == 10;
 }
 
 // Parse a dollar amount string into cents. Strips $, commas, spaces.
@@ -182,40 +195,40 @@ static void extract_last4(const char *card_str, char *out) {
     }
 }
 
-csv_parse_result_t csv_parse_file(const char *path) {
+static void strip_eol(char *line) {
+    int len = (int)strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+        line[--len] = '\0';
+}
+
+static bool ensure_result_capacity(csv_parse_result_t *result, int *capacity) {
+    if (result->row_count < *capacity)
+        return true;
+    *capacity *= 2;
+    csv_row_t *tmp = realloc(result->rows, (size_t)(*capacity) * sizeof(csv_row_t));
+    if (!tmp)
+        return false;
+    result->rows = tmp;
+    return true;
+}
+
+static csv_parse_result_t csv_parse_stream(FILE *f) {
     csv_parse_result_t result = {0};
     result.type = CSV_TYPE_UNKNOWN;
 
-    // Expand leading ~ to $HOME
-    char expanded[1024];
-    if (path[0] == '~') {
-        const char *home = getenv("HOME");
-        if (home)
-            snprintf(expanded, sizeof(expanded), "%s%s", home, path + 1);
-        else
-            snprintf(expanded, sizeof(expanded), "%s", path);
-    } else {
-        snprintf(expanded, sizeof(expanded), "%s", path);
-    }
-
-    FILE *f = fopen(expanded, "r");
-    if (!f) {
-        snprintf(result.error, sizeof(result.error), "Cannot open: %.240s", expanded);
-        return result;
-    }
-
     char line[LINE_BUF];
+    line[0] = '\0';
 
     // Read and parse header row
-    if (!fgets(line, sizeof(line), f)) {
+    while (fgets(line, sizeof(line), f)) {
+        strip_eol(line);
+        if (line[0] != '\0')
+            break;
+    }
+    if (line[0] == '\0') {
         snprintf(result.error, sizeof(result.error), "File is empty");
-        fclose(f);
         return result;
     }
-
-    int llen = (int)strlen(line);
-    while (llen > 0 && (line[llen - 1] == '\n' || line[llen - 1] == '\r'))
-        line[--llen] = '\0';
 
     char hdr_buf[FIELD_BUF];
     char *hdr_fields[MAX_COLS];
@@ -259,7 +272,6 @@ csv_parse_result_t csv_parse_file(const char *path) {
 
     if (col_date < 0) {
         snprintf(result.error, sizeof(result.error), "No date column found");
-        fclose(f);
         return result;
     }
 
@@ -269,35 +281,26 @@ csv_parse_result_t csv_parse_file(const char *path) {
     result.rows = malloc(capacity * sizeof(csv_row_t));
     if (!result.rows) {
         snprintf(result.error, sizeof(result.error), "Out of memory");
-        fclose(f);
         result.type = CSV_TYPE_UNKNOWN;
         return result;
     }
 
     while (fgets(line, sizeof(line), f)) {
-        llen = (int)strlen(line);
-        while (llen > 0 && (line[llen - 1] == '\n' || line[llen - 1] == '\r'))
-            line[--llen] = '\0';
-        if (llen == 0)
+        strip_eol(line);
+        if (line[0] == '\0')
             continue;
 
         char row_buf[FIELD_BUF];
         char *row_fields[MAX_COLS];
         int rnc = csv_parse_line(line, row_fields, MAX_COLS, row_buf, sizeof(row_buf));
 
-        if (result.row_count >= capacity) {
-            capacity *= 2;
-            csv_row_t *tmp = realloc(result.rows, capacity * sizeof(csv_row_t));
-            if (!tmp) {
-                snprintf(result.error, sizeof(result.error), "Out of memory");
-                free(result.rows);
-                result.rows = NULL;
-                result.row_count = 0;
-                result.type = CSV_TYPE_UNKNOWN;
-                fclose(f);
-                return result;
-            }
-            result.rows = tmp;
+        if (!ensure_result_capacity(&result, &capacity)) {
+            snprintf(result.error, sizeof(result.error), "Out of memory");
+            free(result.rows);
+            result.rows = NULL;
+            result.row_count = 0;
+            result.type = CSV_TYPE_UNKNOWN;
+            return result;
         }
 
         csv_row_t *row = &result.rows[result.row_count];
@@ -379,11 +382,195 @@ csv_parse_result_t csv_parse_file(const char *path) {
         result.row_count++;
     }
 
-    fclose(f);
-
     if (result.row_count == 0 && result.error[0] == '\0')
         snprintf(result.error, sizeof(result.error), "No transactions found in file");
 
+    return result;
+}
+
+static bool qif_type_supports_transactions(const char *type_line) {
+    char norm[32];
+    normalize_col(type_line, norm, sizeof(norm));
+    return strcmp(norm, "ccard") == 0 ||
+           strcmp(norm, "bank") == 0 ||
+           strcmp(norm, "cash") == 0;
+}
+
+static csv_parse_result_t qif_parse_stream(FILE *f) {
+    csv_parse_result_t result = {0};
+    result.type = CSV_TYPE_QIF;
+
+    int capacity = 64;
+    result.rows = malloc((size_t)capacity * sizeof(csv_row_t));
+    if (!result.rows) {
+        snprintf(result.error, sizeof(result.error), "Out of memory");
+        result.type = CSV_TYPE_UNKNOWN;
+        return result;
+    }
+
+    char line[LINE_BUF];
+    bool in_account_block = false;
+    bool in_txn_block = false;
+    char pending_account[64] = "";
+    char active_account[64] = "";
+    char seen_account[64] = "";
+    bool multi_account = false;
+
+    char txn_date[64] = "";
+    char txn_amount[64] = "";
+    char txn_payee[128] = "";
+    char txn_memo[256] = "";
+
+    while (fgets(line, sizeof(line), f)) {
+        strip_eol(line);
+        if (line[0] == '\0')
+            continue;
+
+        if (line[0] == '!') {
+            in_txn_block = false;
+            if (strcmp(line, "!Account") == 0) {
+                in_account_block = true;
+                pending_account[0] = '\0';
+            } else if (strncmp(line, "!Type:", 6) == 0) {
+                in_account_block = false;
+                if (qif_type_supports_transactions(line + 6)) {
+                    in_txn_block = true;
+                    snprintf(active_account, sizeof(active_account), "%s",
+                             pending_account);
+                }
+            }
+            continue;
+        }
+
+        if (in_account_block) {
+            if (line[0] == 'N') {
+                snprintf(pending_account, sizeof(pending_account), "%s", line + 1);
+            } else if (line[0] == '^') {
+                in_account_block = false;
+            }
+            continue;
+        }
+
+        if (!in_txn_block)
+            continue;
+
+        if (line[0] == '^') {
+            if (txn_date[0] && txn_amount[0]) {
+                int64_t signed_amount = 0;
+                if (parse_csv_amount(txn_amount, &signed_amount)) {
+                    if (!ensure_result_capacity(&result, &capacity)) {
+                        snprintf(result.error, sizeof(result.error), "Out of memory");
+                        free(result.rows);
+                        result.rows = NULL;
+                        result.row_count = 0;
+                        result.type = CSV_TYPE_UNKNOWN;
+                        return result;
+                    }
+
+                    csv_row_t *row = &result.rows[result.row_count];
+                    memset(row, 0, sizeof(*row));
+                    if (!normalize_date(txn_date, row->date))
+                        snprintf(row->date, sizeof(row->date), "%.10s", txn_date);
+                    row->type = signed_amount < 0 ? TRANSACTION_EXPENSE
+                                                  : TRANSACTION_INCOME;
+                    row->amount_cents = signed_amount < 0 ? -signed_amount
+                                                          : signed_amount;
+                    snprintf(row->payee, sizeof(row->payee), "%s", txn_payee);
+                    snprintf(row->description, sizeof(row->description), "%s",
+                             txn_memo);
+                    result.row_count++;
+
+                    if (active_account[0] != '\0') {
+                        if (seen_account[0] == '\0') {
+                            snprintf(seen_account, sizeof(seen_account), "%s",
+                                     active_account);
+                        } else if (strcmp(seen_account, active_account) != 0) {
+                            multi_account = true;
+                        }
+                    }
+                }
+            }
+
+            txn_date[0] = '\0';
+            txn_amount[0] = '\0';
+            txn_payee[0] = '\0';
+            txn_memo[0] = '\0';
+            continue;
+        }
+
+        switch (line[0]) {
+        case 'D':
+            snprintf(txn_date, sizeof(txn_date), "%s", line + 1);
+            break;
+        case 'T':
+            snprintf(txn_amount, sizeof(txn_amount), "%s", line + 1);
+            break;
+        case 'P':
+            snprintf(txn_payee, sizeof(txn_payee), "%s", line + 1);
+            break;
+        case 'M':
+            snprintf(txn_memo, sizeof(txn_memo), "%s", line + 1);
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (multi_account) {
+        snprintf(result.error, sizeof(result.error),
+                 "QIF import supports one account per file.");
+        free(result.rows);
+        result.rows = NULL;
+        result.row_count = 0;
+        result.type = CSV_TYPE_UNKNOWN;
+        return result;
+    }
+    if (seen_account[0] != '\0')
+        snprintf(result.source_account, sizeof(result.source_account), "%s",
+                 seen_account);
+    if (result.row_count == 0 && result.error[0] == '\0')
+        snprintf(result.error, sizeof(result.error), "No transactions found in file");
+
+    return result;
+}
+
+static bool file_looks_like_qif(FILE *f) {
+    char line[LINE_BUF];
+    while (fgets(line, sizeof(line), f)) {
+        strip_eol(line);
+        if (line[0] == '\0')
+            continue;
+        return line[0] == '!';
+    }
+    return false;
+}
+
+csv_parse_result_t csv_parse_file(const char *path) {
+    csv_parse_result_t result = {0};
+    result.type = CSV_TYPE_UNKNOWN;
+
+    // Expand leading ~ to $HOME
+    char expanded[1024];
+    if (path[0] == '~') {
+        const char *home = getenv("HOME");
+        if (home)
+            snprintf(expanded, sizeof(expanded), "%s%s", home, path + 1);
+        else
+            snprintf(expanded, sizeof(expanded), "%s", path);
+    } else {
+        snprintf(expanded, sizeof(expanded), "%s", path);
+    }
+
+    FILE *f = fopen(expanded, "r");
+    if (!f) {
+        snprintf(result.error, sizeof(result.error), "Cannot open: %.240s", expanded);
+        return result;
+    }
+
+    bool is_qif = file_looks_like_qif(f);
+    rewind(f);
+    result = is_qif ? qif_parse_stream(f) : csv_parse_stream(f);
+    fclose(f);
     return result;
 }
 
@@ -445,6 +632,9 @@ void csv_parse_result_free(csv_parse_result_t *r) {
     free(r->rows);
     r->rows = NULL;
     r->row_count = 0;
+    r->type = CSV_TYPE_UNKNOWN;
+    r->source_account[0] = '\0';
+    r->error[0] = '\0';
 }
 
 int csv_import_credit_card(sqlite3 *db, const csv_parse_result_t *r,

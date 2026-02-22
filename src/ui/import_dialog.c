@@ -5,6 +5,7 @@
 #include "ui/colors.h"
 #include "ui/resize.h"
 
+#include <ctype.h>
 #include <ncurses.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,50 @@ typedef struct {
     int txn_count;
     int dup_count;          // of txn_count, how many already exist in DB
 } card_entry_t;
+
+static bool names_equivalent(const char *a, const char *b) {
+    if (!a || !b)
+        return false;
+
+    char na[96];
+    char nb[96];
+    int ia = 0;
+    int ib = 0;
+    for (int i = 0; a[i] && ia < (int)sizeof(na) - 1; i++) {
+        if (isalnum((unsigned char)a[i]))
+            na[ia++] = (char)tolower((unsigned char)a[i]);
+    }
+    for (int i = 0; b[i] && ib < (int)sizeof(nb) - 1; i++) {
+        if (isalnum((unsigned char)b[i]))
+            nb[ib++] = (char)tolower((unsigned char)b[i]);
+    }
+    na[ia] = '\0';
+    nb[ib] = '\0';
+
+    if (strcmp(na, nb) == 0)
+        return true;
+
+    const char *suffixes[] = {"cc", "card", "creditcard"};
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
+        const char *suffix = suffixes[i];
+        size_t sfx_len = strlen(suffix);
+        size_t na_len = strlen(na);
+        size_t nb_len = strlen(nb);
+
+        if (nb_len == na_len + sfx_len &&
+            strncmp(nb, na, na_len) == 0 &&
+            strcmp(nb + na_len, suffix) == 0) {
+            return true;
+        }
+        if (na_len == nb_len + sfx_len &&
+            strncmp(na, nb, nb_len) == 0 &&
+            strcmp(na + nb_len, suffix) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // Build a deduplicated list of cards from the parse result and match them
 // against CREDIT_CARD accounts. Returns count of cards, fills *out (caller frees).
@@ -219,10 +264,10 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
         // ----------------------------------------------------------------
         case STAGE_PATH: {
             curs_set(1);
-            draw_border(w, win_h, win_w, " Import CSV ",
+            draw_border(w, win_h, win_w, " Import File ",
                         " Enter:Import  Esc:Cancel ");
 
-            mvwprintw(w, 2, 2, "File path:");
+            mvwprintw(w, 2, 2, "File path (.csv/.qif):");
 
             // Path input field (highlight with COLOR_FORM_ACTIVE)
             wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
@@ -294,12 +339,27 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
                     if (account_count < 0)
                         account_count = 0;
 
-                    // Pre-select current account if possible
+                    // Pre-select QIF account name when available; otherwise use
+                    // current account if possible.
                     acct_sel = 0;
-                    for (int i = 0; i < account_count; i++) {
-                        if (accounts[i].id == current_account_id) {
-                            acct_sel = i;
-                            break;
+                    bool preselected = false;
+                    if (parse_result.type == CSV_TYPE_QIF &&
+                        parse_result.source_account[0]) {
+                        for (int i = 0; i < account_count; i++) {
+                            if (names_equivalent(accounts[i].name,
+                                                 parse_result.source_account)) {
+                                acct_sel = i;
+                                preselected = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!preselected) {
+                        for (int i = 0; i < account_count; i++) {
+                            if (accounts[i].id == current_account_id) {
+                                acct_sel = i;
+                                break;
+                            }
                         }
                     }
                     acct_scroll = 0;
@@ -346,7 +406,7 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
                 }
             }
 
-            draw_border(w, win_h, win_w, " Import CSV \u2013 Credit Card ",
+            draw_border(w, win_h, win_w, " Import File \u2013 Credit Card ",
                         " Enter:Import  Esc:Cancel ");
 
             int row = 2;
@@ -401,7 +461,7 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
         }
 
         // ----------------------------------------------------------------
-        // STAGE_SELECT_ACCT: scrollable account list for CS import
+        // STAGE_SELECT_ACCT: scrollable account list for account-targeted import
         // ----------------------------------------------------------------
         case STAGE_SELECT_ACCT: {
             curs_set(0);
@@ -419,7 +479,7 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
                 acct_scroll = acct_sel - list_h + 1;
 
             draw_border(w, win_h, win_w,
-                        " Import CSV \u2013 Select Account ",
+                        " Import File \u2013 Select Account ",
                         " Enter:Import  j/k:Navigate  Esc:Cancel ");
 
             for (int i = 0; i < list_h; i++) {
@@ -487,7 +547,7 @@ int import_dialog(WINDOW *parent, sqlite3 *db, int64_t current_account_id) {
         // ----------------------------------------------------------------
         case STAGE_RESULT: {
             curs_set(0);
-            draw_border(w, win_h, win_w, " Import CSV ",
+            draw_border(w, win_h, win_w, " Import File ",
                         " Any key to close ");
 
             mvwprintw(w, win_h / 2 - 1, 2, "Imported: %d   Skipped: %d",

@@ -9,7 +9,8 @@
 typedef enum {
     CSV_TYPE_UNKNOWN,
     CSV_TYPE_CREDIT_CARD,
-    CSV_TYPE_CHECKING_SAVINGS
+    CSV_TYPE_CHECKING_SAVINGS,
+    CSV_TYPE_QIF
 } csv_type_t;
 
 typedef struct {
@@ -25,10 +26,12 @@ typedef struct {
     csv_type_t type;
     csv_row_t *rows;
     int row_count;
+    char source_account[64];
     char error[256];
 } csv_parse_result_t;
 
-// Parse a CSV file. Returns result with type set; result.error non-empty on failure.
+// Parse a CSV or QIF file. Returns result with type set; result.error non-empty
+// on failure. For QIF imports, source_account is set when one account is found.
 // Caller must call csv_parse_result_free() when done.
 csv_parse_result_t csv_parse_file(const char *path);
 
