@@ -119,7 +119,8 @@ static const help_row_t help_rows[] = {
     {"h / \u2190", "Previous month"},
     {"l / \u2192", "Next month"},
     {"r", "Jump to current month"},
-    {"e / Enter", "Edit selected parent budget"},
+    {"Enter", "Show matching transactions"},
+    {"e", "Edit selected parent budget"},
     {"Esc", "Cancel inline edit"},
 };
 

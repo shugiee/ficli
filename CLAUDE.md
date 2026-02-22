@@ -120,6 +120,7 @@ make clean    # clean build artifacts
 - [x] Allow "reflection date" field for transactions to let user control where they're bucketed for reports and budgets without editing actual transaction date
 - [x] Automatically enter inverse transaction for transfers
 - [x] Budget tracking ([plan](../.claude/plans/budget-tracking-v1.md))
+- [x] Show related transactions in Budget view on "Enter"; only edit on `e` ([plan](../.claude/plans/budget-related-transactions-on-enter.md))
 - [ ] Enforce a minimum window width and height. Show a full-screen message if window is too small, giving dimensions.
 - [ ] Summary/report views
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization

@@ -154,6 +154,18 @@ typedef struct {
     int utilization_bps;
 } budget_row_t;
 
+// Lightweight transaction row for matching transactions in Budgets view.
+typedef struct {
+    int64_t id;
+    int64_t amount_cents;
+    transaction_type_t type;
+    char effective_date[11];
+    char account_name[64];
+    char category_name[64];
+    char payee[128];
+    char description[256];
+} budget_txn_row_t;
+
 // Fetch active top-level budget rows for month "YYYY-MM". Caller frees *out.
 // Returns count, -1 on error.
 int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
@@ -174,5 +186,12 @@ int db_set_budget_effective(sqlite3 *db, int64_t category_id,
 // success, -2 when no matching rule exists, -1 on error.
 int db_get_budget_limit_for_month(sqlite3 *db, int64_t category_id,
                                   const char *month_ym, int64_t *out_limit_cents);
+
+// Fetch transactions matching the category subtree for a month ("YYYY-MM"),
+// using effective date (COALESCE(reflection_date, date)).
+// Caller frees *out. Returns count, -1 on error.
+int db_get_budget_transactions_for_month(sqlite3 *db, int64_t category_id,
+                                         const char *month_ym,
+                                         budget_txn_row_t **out);
 
 #endif

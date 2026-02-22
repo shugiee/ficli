@@ -1379,6 +1379,115 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
     return count;
 }
 
+int db_get_budget_transactions_for_month(sqlite3 *db, int64_t category_id,
+                                         const char *month_ym,
+                                         budget_txn_row_t **out) {
+    if (!out || category_id <= 0)
+        return -1;
+    *out = NULL;
+
+    char norm_month[8];
+    if (normalize_budget_month(month_ym, norm_month) < 0)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "WITH RECURSIVE descendants(category_id) AS ("
+        "  SELECT id FROM categories WHERE id = ?"
+        "  UNION ALL"
+        "  SELECT c.id FROM categories c"
+        "  JOIN descendants d ON c.parent_id = d.category_id"
+        ")"
+        " SELECT t.id, t.amount_cents, t.type,"
+        "        COALESCE(t.reflection_date, t.date),"
+        "        COALESCE(a.name, ''),"
+        "        CASE"
+        "          WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "          ELSE COALESCE(c.name, '')"
+        "        END,"
+        "        COALESCE(t.payee, ''),"
+        "        COALESCE(t.description, '')"
+        " FROM transactions t"
+        " JOIN descendants d ON d.category_id = t.category_id"
+        " LEFT JOIN accounts a ON a.id = t.account_id"
+        " LEFT JOIN categories c ON c.id = t.category_id"
+        " LEFT JOIN categories p ON p.id = c.parent_id"
+        " WHERE substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
+        "   AND t.type IN ('EXPENSE', 'INCOME')"
+        " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_budget_transactions_for_month prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, category_id);
+    sqlite3_bind_text(stmt, 2, norm_month, -1, SQLITE_TRANSIENT);
+
+    int capacity = 32;
+    int count = 0;
+    budget_txn_row_t *list =
+        malloc((size_t)capacity * sizeof(budget_txn_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            budget_txn_row_t *tmp = realloc(
+                list, (size_t)capacity * sizeof(budget_txn_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+
+        memset(&list[count], 0, sizeof(budget_txn_row_t));
+        list[count].id = sqlite3_column_int64(stmt, 0);
+        list[count].amount_cents = sqlite3_column_int64(stmt, 1);
+        const char *ttype = (const char *)sqlite3_column_text(stmt, 2);
+        list[count].type = transaction_type_from_str(ttype);
+        const char *effective_date = (const char *)sqlite3_column_text(stmt, 3);
+        snprintf(list[count].effective_date, sizeof(list[count].effective_date),
+                 "%s", effective_date ? effective_date : "");
+        const char *account_name = (const char *)sqlite3_column_text(stmt, 4);
+        snprintf(list[count].account_name, sizeof(list[count].account_name),
+                 "%s", account_name ? account_name : "");
+        const char *category_name = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(list[count].category_name, sizeof(list[count].category_name),
+                 "%s", category_name ? category_name : "");
+        const char *payee = (const char *)sqlite3_column_text(stmt, 6);
+        snprintf(list[count].payee, sizeof(list[count].payee), "%s",
+                 payee ? payee : "");
+        const char *description = (const char *)sqlite3_column_text(stmt, 7);
+        snprintf(list[count].description, sizeof(list[count].description), "%s",
+                 description ? description : "");
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_budget_transactions_for_month step: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(list);
+        return 0;
+    }
+
+    *out = list;
+    return count;
+}
+
 int64_t db_insert_transaction(sqlite3 *db, const transaction_t *txn) {
     char norm_date[11];
     if (normalize_txn_date(txn->date, norm_date) < 0)
