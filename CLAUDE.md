@@ -129,9 +129,12 @@ make clean    # clean build artifacts
 - [x] Allow mass-renaming payee after filtering transactions list ([plan](../.claude/plans/mass-rename-payee-filtered-list.md))
 - [x] Make QIF import include categorization. Prompt user to create new category, assign to other category, or leave uncategorized when QIF transaction has a category that doesn't exist in the app yet. (Also applies category fields from CSV imports.) ([plan](../.claude/plans/import-category-qif-csv.md))
 - [x] Allow category/subcategory include-exclude toggles for budget calculations, with global mode for excluding selected categories or only including selected categories
-- [ ] Show running deficit or surplus in budget view based on this year's actuals vs. expected progress through the current date
+- [ ] Make edit Category popout larger
+- [ ] Don't show "Income" in Credit Card account headers
+- [ ] Show running deficit or surplus in budget view based on this year's actuals vs. expected progress through the current date. We should show a top-level running surplus/deficit number and per-category surplus/deficit numbers in the category list, between the "Budget" and "Net" columns.
 - [ ] Support adding a budget for a hidden category in budgets view (since we currenly only show categories matching transactions in the current month)
-- [ ] Add CLI arguments for quick actions (e.g., `ficli import -account "CapitalOne" -file ~/Downloads/transactions.csv`)
+- [ ] Add CLI arguments for quick actions (e.g., `ficli import -account "CapitalOne" -file ~/Downloads/transactions.csv`) or `ficli import` which then queries for accounts and asks which file in ~/Downloads relates to each account (allowing skipping that account if no file matches)
+- [ ] Show summary information on Accounts page. E.g. net cash balance, total value (including assets and investments)
 - [ ] Allow user to focus and edit transactions in budget view
 - [ ] Allow annual budget for categories with monthly breakdowns
 - [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
