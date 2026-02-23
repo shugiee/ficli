@@ -464,19 +464,55 @@ static int rebuild_category_sections(budget_list_state_t *ls) {
             unbudgeted_mark[i] = true;
     }
 
-    // If a child is shown in a table, also show its parent for context.
+    // If a parent has a direct budget, or any child has a budget,
+    // show the entire parent+children family in the budgeted table.
+    for (int i = 0; i < ls->row_count; i++) {
+        const budget_display_row_t *parent = &ls->rows[i];
+        if (!parent->is_parent)
+            continue;
+
+        bool family_budgeted = parent->row.has_rule;
+        if (!family_budgeted) {
+            for (int j = 0; j < ls->row_count; j++) {
+                const budget_display_row_t *child = &ls->rows[j];
+                if (child->is_parent ||
+                    child->row.parent_category_id != parent->row.category_id)
+                    continue;
+                if (child->row.has_rollup_rule) {
+                    family_budgeted = true;
+                    break;
+                }
+            }
+        }
+
+        if (!family_budgeted)
+            continue;
+
+        budgeted_mark[i] = true;
+        unbudgeted_mark[i] = false;
+        for (int j = 0; j < ls->row_count; j++) {
+            const budget_display_row_t *child = &ls->rows[j];
+            if (child->is_parent ||
+                child->row.parent_category_id != parent->row.category_id)
+                continue;
+            budgeted_mark[j] = true;
+            unbudgeted_mark[j] = false;
+        }
+    }
+
+    // If an unbudgeted child is shown, also show its parent for context.
+    // Parent context is suppressed when that parent is already budgeted.
     for (int i = 0; i < ls->row_count; i++) {
         const budget_display_row_t *drow = &ls->rows[i];
-        if (drow->is_parent || drow->row.parent_category_id <= 0)
+        if (drow->is_parent || drow->row.parent_category_id <= 0 ||
+            !unbudgeted_mark[i])
             continue;
 
         int parent_idx = find_parent_row_index(ls, drow->row.parent_category_id);
         if (parent_idx < 0)
             continue;
 
-        if (budgeted_mark[i])
-            budgeted_mark[parent_idx] = true;
-        if (unbudgeted_mark[i])
+        if (!budgeted_mark[parent_idx])
             unbudgeted_mark[parent_idx] = true;
     }
 

@@ -195,7 +195,7 @@ int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
 // for a category subtree. actual_cents uses EXPENSE-INCOME net over allowed
 // categories based on current budget filter settings. expected_cents is the sum
 // of monthly effective limits for category_id from Jan through current month,
-// with current month prorated by day-of-month progress.
+// with current month counted at full monthly budget.
 int db_get_budget_running_progress_for_current_year(sqlite3 *db,
                                                     int64_t category_id,
                                                     int64_t *out_actual_cents,
