@@ -1094,7 +1094,7 @@ int db_get_account_balance_series(sqlite3 *db, int64_t account_id,
         " END), 0)"
         " FROM transactions"
         " WHERE account_id = ?"
-        "   AND date < date('now', 'localtime', ?)",
+        "   AND COALESCE(reflection_date, date) < date('now', 'localtime', ?)",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_account_balance_series opening prepare: %s\n",
@@ -1118,7 +1118,7 @@ int db_get_account_balance_series(sqlite3 *db, int64_t account_id,
 
     rc = sqlite3_prepare_v2(
         db,
-        "SELECT date,"
+        "SELECT COALESCE(reflection_date, date),"
         "       COALESCE(SUM(CASE"
         "         WHEN type = 'INCOME' THEN amount_cents"
         "         WHEN type = 'EXPENSE' THEN -amount_cents"
@@ -1130,10 +1130,10 @@ int db_get_account_balance_series(sqlite3 *db, int64_t account_id,
         "       END), 0)"
         " FROM transactions"
         " WHERE account_id = ?"
-        "   AND date >= date('now', 'localtime', ?)"
-        "   AND date <= date('now', 'localtime')"
-        " GROUP BY date"
-        " ORDER BY date",
+        "   AND COALESCE(reflection_date, date) >= date('now', 'localtime', ?)"
+        "   AND COALESCE(reflection_date, date) <= date('now', 'localtime')"
+        " GROUP BY COALESCE(reflection_date, date)"
+        " ORDER BY COALESCE(reflection_date, date)",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_account_balance_series deltas prepare: %s\n",

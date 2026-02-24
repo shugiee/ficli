@@ -19,7 +19,6 @@
 #define BALANCE_CHART_LOOKBACK_DAYS 90
 #define CHART_PLOT_HEIGHT 6
 #define CHART_MIN_WIDTH 56
-#define CHART_SCALE_CAP_CENTS 100000
 // Description column takes remaining width, but enforce a minimum for usability
 #define DESC_COL_MIN_WIDTH 4
 
@@ -695,8 +694,6 @@ static void draw_balance_chart(txn_list_state_t *ls, WINDOW *win, int w,
     int64_t abs_min = (min_c < 0) ? -min_c : min_c;
     int64_t abs_max = (max_c < 0) ? -max_c : max_c;
     int64_t scale_abs = abs_min > abs_max ? abs_min : abs_max;
-    if (scale_abs > CHART_SCALE_CAP_CENTS)
-        scale_abs = CHART_SCALE_CAP_CENTS;
     if (scale_abs < 1)
         scale_abs = 1;
 
