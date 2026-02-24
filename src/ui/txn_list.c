@@ -1489,6 +1489,28 @@ bool txn_list_handle_input(txn_list_state_t *ls, WINDOW *parent, int ch) {
             }
         }
         return true;
+    case 'D':
+        if (ls->display_count <= 0)
+            return true;
+        {
+            int64_t tmpl_id = txn_list_template_id(ls);
+            if (tmpl_id <= 0)
+                return true;
+            transaction_t txn = {0};
+            int rc = db_get_transaction_by_id(ls->db, (int)tmpl_id, &txn);
+            if (rc == 0) {
+                form_result_t res =
+                    form_transaction_duplicate(parent, ls->db, &txn);
+                if (res == FORM_SAVED) {
+                    txn_list_clear_selected(ls);
+                    ls->next_reload_focus_txn_id = txn.id;
+                    ls->dirty = true;
+                }
+            } else {
+                ls->dirty = true;
+            }
+        }
+        return true;
     case ' ':
         if (ls->display_count <= 0)
             return true;
@@ -1546,12 +1568,12 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
                                                         : "e edit";
     if (ls->selected_count > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  ls->selected_count, edit_tag, filter_tag);
     } else {
         snprintf(buf, sizeof(buf),
-                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  d delete  %s  s sort  S dir  1-9 acct "
+                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  edit_tag, filter_tag);
     }

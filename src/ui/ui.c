@@ -82,6 +82,7 @@ static const help_row_t help_rows[] = {
     {"Esc", "Clear selection"},
     {"e", "Edit selected (or choose edited-only vs all filtered)"},
     {"c", "Edit category only"},
+    {"D", "Duplicate selected/current (confirm modal)"},
     {"d", "Delete selected"},
     {"/", "Filter"},
     {"s", "Cycle sort column"},

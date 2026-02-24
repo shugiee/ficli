@@ -17,6 +17,11 @@ typedef enum {
 // Show modal transaction form. Returns FORM_SAVED or FORM_CANCELLED.
 form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn, bool is_edit);
 
+// Show duplicate confirmation/edit form pre-filled from an existing transaction.
+// Saves as a new transaction when submitted.
+form_result_t form_transaction_duplicate(WINDOW *parent, sqlite3 *db,
+                                         transaction_t *txn);
+
 // Show modal category-only editor for an existing non-transfer transaction.
 // Returns FORM_SAVED when category was updated.
 form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,

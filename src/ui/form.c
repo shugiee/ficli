@@ -42,6 +42,8 @@ typedef struct {
     sqlite3 *db;
     transaction_t *txn;
     bool is_edit;
+    const char *title;
+    const char *submit_label;
 
     int current_field;
     bool dropdown_open;
@@ -332,7 +334,7 @@ static void format_amount_string(int64_t cents, char *buf, size_t buflen) {
 }
 
 static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
-                            bool is_edit) {
+                            bool is_edit, bool prefill_from_txn) {
     memset(fs, 0, sizeof(*fs));
     fs->db = db;
     fs->txn = txn;
@@ -358,7 +360,7 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
     fs->reflection_date[0] = '\0';
     fs->reflection_date_pos = 0;
 
-    if (is_edit && txn) {
+    if ((is_edit || prefill_from_txn) && txn) {
         fs->txn_type = txn->type;
         fs->transfer_id = txn->transfer_id;
         format_amount_string(txn->amount_cents, fs->amount, sizeof(fs->amount));
@@ -384,10 +386,10 @@ static void form_init_state(form_state_t *fs, sqlite3 *db, transaction_t *txn,
 
     // Load categories for current type
     form_load_categories(fs);
-    if (!is_edit)
+    if (!is_edit && !prefill_from_txn)
         form_select_default_category(fs);
 
-    if (is_edit && txn) {
+    if ((is_edit || prefill_from_txn) && txn) {
         for (int i = 0; i < fs->account_count; i++) {
             if (fs->accounts[i].id == txn->account_id) {
                 fs->account_sel = i;
@@ -443,8 +445,9 @@ static void form_draw(form_state_t *fs) {
     box(w, 0, 0);
 
     // Title
-    const char *title =
-        fs->is_edit ? " Edit Transaction " : " Add Transaction ";
+    const char *title = fs->title;
+    if (!title)
+        title = fs->is_edit ? " Edit Transaction " : " Add Transaction ";
     int tw = (int)strlen(title);
     int ww = getmaxx(w);
     mvwprintw(w, 0, (ww - tw) / 2, "%s", title);
@@ -528,7 +531,7 @@ static void form_draw(form_state_t *fs) {
     int submit_row = field_row(FIELD_SUBMIT);
     bool submit_active =
         (fs->current_field == FIELD_SUBMIT && !fs->dropdown_open);
-    const char *btn = "[ Submit ]";
+    const char *btn = fs->submit_label ? fs->submit_label : "[ Submit ]";
     int btn_len = (int)strlen(btn);
     if (submit_active)
         wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE) | A_BOLD);
@@ -1995,8 +1998,11 @@ form_result_t form_category(WINDOW *parent, sqlite3 *db, category_t *category,
     return result;
 }
 
-form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
-                               bool is_edit) {
+static form_result_t
+form_transaction_with_options(WINDOW *parent, sqlite3 *db, transaction_t *txn,
+                              bool is_edit, bool prefill_from_txn,
+                              bool focus_submit, const char *title,
+                              const char *submit_label) {
     int ph, pw;
     getmaxyx(parent, ph, pw);
 
@@ -2006,7 +2012,11 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
     }
 
     form_state_t fs;
-    form_init_state(&fs, db, txn, is_edit);
+    form_init_state(&fs, db, txn, is_edit, prefill_from_txn);
+    fs.title = title;
+    fs.submit_label = submit_label;
+    if (focus_submit)
+        fs.current_field = FIELD_SUBMIT;
 
     // Center the form over the parent content window
     int start_y, start_x;
@@ -2233,6 +2243,21 @@ form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
     return result;
 }
 
+form_result_t form_transaction(WINDOW *parent, sqlite3 *db, transaction_t *txn,
+                               bool is_edit) {
+    return form_transaction_with_options(parent, db, txn, is_edit, false, false,
+                                         NULL, NULL);
+}
+
+form_result_t form_transaction_duplicate(WINDOW *parent, sqlite3 *db,
+                                         transaction_t *txn) {
+    if (!txn)
+        return FORM_CANCELLED;
+    return form_transaction_with_options(parent, db, txn, false, true, true,
+                                         " Duplicate Transaction ",
+                                         "[ Duplicate ]");
+}
+
 form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
                                         transaction_t *txn) {
     int ph, pw;
@@ -2243,7 +2268,7 @@ form_result_t form_transaction_category(WINDOW *parent, sqlite3 *db,
         return FORM_CANCELLED;
 
     form_state_t fs;
-    form_init_state(&fs, db, txn, true);
+    form_init_state(&fs, db, txn, true, false);
     fs.current_field = FIELD_CATEGORY;
     fs.error[0] = '\0';
 
