@@ -1556,18 +1556,6 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
     int tables_start_row = 9;
 
     mvwprintw(win, title_row, 2, "Budgets  Month:%s", ls->month);
-    const char *title_hint = NULL;
-    if (ls->filter_panel_open) {
-        title_hint = "Esc/f:Close filter  m:Mode  Space:Toggle";
-    } else if (ls->edit_mode) {
-        title_hint = "Enter:Save Esc:Cancel";
-    } else {
-        title_hint = "h/l:Month  r:Now  Enter:Txns  e:Edit  f:Filter";
-    }
-    int title_hint_col = w - 2 - (int)strlen(title_hint);
-    if (title_hint_col < 2)
-        title_hint_col = 2;
-    mvwprintw(win, title_row, title_hint_col, "%s", title_hint);
 
     mvwprintw(win, msg_row, 2, "%-*s", w - 4, "");
     if (ls->message[0] != '\0')
