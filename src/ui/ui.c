@@ -1,8 +1,10 @@
 #include "ui/ui.h"
+#include "db/query.h"
 #include "ui/account_list.h"
 #include "ui/budget_list.h"
 #include "ui/category_list.h"
 #include "ui/colors.h"
+#include "ui/error_popup.h"
 #include "ui/form.h"
 #include "ui/import_dialog.h"
 #include "ui/resize.h"
@@ -22,6 +24,7 @@
 #define RESIZE_DEBOUNCE_MS 60
 #define MIN_TERM_COLS 80
 #define MIN_TERM_ROWS 24
+#define AUTO_LINK_DATE_WINDOW_DAYS 3
 
 typedef struct {
     const char *label;
@@ -65,6 +68,7 @@ static const help_row_t help_rows[] = {
     {"q", "Quit"},
     {"a", "Add transaction"},
     {"i", "Import file"},
+    {"L", "Auto-link transfers"},
     {"t", "Toggle theme"},
     {"?", "This help"},
 
@@ -548,7 +552,7 @@ static void ui_draw_status(void) {
                   budget_list_status_hint(state.budget_list));
     } else {
         mvwprintw(state.status, 0, 1,
-                  "q:Quit  a:Add  i:Import  t:Theme  ?:Help  "
+                  "q:Quit  a:Add  i:Import  L:Auto-link  t:Theme  ?:Help  "
                   "\u2191\u2193:Navigate  Enter:Select");
     }
     wnoutrefresh(state.status);
@@ -666,6 +670,495 @@ static void ui_show_help(void) {
     ui_touch_layout_windows();
 }
 
+typedef struct {
+    int64_t id;
+    int64_t account_id;
+    char account_name[64];
+    transaction_type_t type;
+    int64_t amount_cents;
+    char date[11];
+    char payee[128];
+} link_scan_txn_t;
+
+typedef enum {
+    LINK_PICK_SELECT = 0,
+    LINK_PICK_SKIP = 1,
+    LINK_PICK_CANCEL = 2
+} link_pick_result_t;
+
+typedef struct {
+    int scanned;
+    int linked;
+    int skipped;
+    int ambiguous_prompts;
+    bool cancelled;
+} auto_link_result_t;
+
+static const char *ui_txn_type_label(transaction_type_t type) {
+    return (type == TRANSACTION_INCOME) ? "Income" : "Expense";
+}
+
+static void ui_format_amount_plain(int64_t cents, char *buf, size_t buflen) {
+    int64_t abs_cents = cents < 0 ? -cents : cents;
+    snprintf(buf, buflen, "%ld.%02ld", (long)(abs_cents / 100),
+             (long)(abs_cents % 100));
+}
+
+static bool ui_confirm_auto_link_start(WINDOW *parent) {
+    if (!parent)
+        return false;
+
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    int win_h = 9;
+    int win_w = 74;
+    if (win_h > ph)
+        win_h = ph;
+    if (win_w > pw)
+        win_w = pw;
+    if (win_h < 6 || win_w < 42)
+        return false;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    WINDOW *w = newwin(win_h, win_w, py + (ph - win_h) / 2, px + (pw - win_w) / 2);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+    mvwprintw(w, 0, 2, " Auto-link Transfers ");
+    mvwprintw(w, 2, 2, "Scan all accounts and auto-link potential transfers?");
+    mvwprintw(
+        w, 4, 2,
+        "Rule: same amount + opposite type + within %d days across accounts.",
+        AUTO_LINK_DATE_WINDOW_DAYS);
+    mvwprintw(w, win_h - 2, 2, "y:Start  n:Cancel");
+    wrefresh(w);
+
+    bool confirmed = false;
+    bool done = false;
+    while (!done) {
+        int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            done = true;
+            confirmed = false;
+            continue;
+        }
+        switch (ch) {
+        case 'y':
+        case 'Y':
+            confirmed = true;
+            done = true;
+            break;
+        case 'n':
+        case 'N':
+        case 27:
+            confirmed = false;
+            done = true;
+            break;
+        default:
+            break;
+        }
+    }
+
+    delwin(w);
+    touchwin(parent);
+    return confirmed;
+}
+
+static void ui_show_info_popup(WINDOW *parent, const char *title,
+                               const char *line1, const char *line2) {
+    if (!parent)
+        return;
+
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    int win_h = 8;
+    int win_w = 72;
+    if (win_h > ph)
+        win_h = ph;
+    if (win_w > pw)
+        win_w = pw;
+    if (win_h < 5 || win_w < 30)
+        return;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    WINDOW *w = newwin(win_h, win_w, py + (ph - win_h) / 2, px + (pw - win_w) / 2);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+    box(w, 0, 0);
+    mvwprintw(w, 0, 2, "%s", title && title[0] ? title : " Result ");
+    mvwprintw(w, 2, 2, "%-*.*s", win_w - 4, win_w - 4, line1 ? line1 : "");
+    mvwprintw(w, 3, 2, "%-*.*s", win_w - 4, win_w - 4, line2 ? line2 : "");
+    mvwprintw(w, win_h - 2, 2, "Press any key");
+    wrefresh(w);
+
+    int ch = wgetch(w);
+    (void)ui_requeue_resize_event(ch);
+    delwin(w);
+    touchwin(parent);
+}
+
+static int ui_collect_unlinked_transactions(sqlite3 *db, link_scan_txn_t **out) {
+    if (!db || !out)
+        return -1;
+    *out = NULL;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT t.id, t.account_id, a.name, t.type, t.amount_cents, t.date,"
+        "       COALESCE(t.payee, '')"
+        " FROM transactions t"
+        " JOIN accounts a ON a.id = t.account_id"
+        " WHERE t.transfer_id IS NULL"
+        "   AND t.type IN ('EXPENSE', 'INCOME')"
+        " ORDER BY t.date, t.id",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    int cap = 64;
+    int count = 0;
+    link_scan_txn_t *rows = malloc((size_t)cap * sizeof(*rows));
+    if (!rows) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= cap) {
+            cap *= 2;
+            link_scan_txn_t *tmp =
+                realloc(rows, (size_t)cap * sizeof(*rows));
+            if (!tmp) {
+                free(rows);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            rows = tmp;
+        }
+
+        link_scan_txn_t *row = &rows[count++];
+        memset(row, 0, sizeof(*row));
+        row->id = sqlite3_column_int64(stmt, 0);
+        row->account_id = sqlite3_column_int64(stmt, 1);
+        const char *acct = (const char *)sqlite3_column_text(stmt, 2);
+        snprintf(row->account_name, sizeof(row->account_name), "%s",
+                 acct ? acct : "");
+        const char *type = (const char *)sqlite3_column_text(stmt, 3);
+        row->type = (type && strcmp(type, "INCOME") == 0) ? TRANSACTION_INCOME
+                                                            : TRANSACTION_EXPENSE;
+        row->amount_cents = sqlite3_column_int64(stmt, 4);
+        const char *date = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(row->date, sizeof(row->date), "%s", date ? date : "");
+        const char *payee = (const char *)sqlite3_column_text(stmt, 6);
+        snprintf(row->payee, sizeof(row->payee), "%s", payee ? payee : "");
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        free(rows);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(rows);
+        rows = NULL;
+    }
+    *out = rows;
+    return count;
+}
+
+static int ui_find_transfer_matches(sqlite3 *db, const transaction_t *base,
+                                    link_scan_txn_t **out) {
+    if (!db || !base || !out)
+        return -1;
+    *out = NULL;
+    if (base->type != TRANSACTION_EXPENSE && base->type != TRANSACTION_INCOME)
+        return 0;
+
+    const char *need_type =
+        (base->type == TRANSACTION_EXPENSE) ? "INCOME" : "EXPENSE";
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT t.id, t.account_id, a.name, t.type, t.amount_cents, t.date,"
+        "       COALESCE(t.payee, '')"
+        " FROM transactions t"
+        " JOIN accounts a ON a.id = t.account_id"
+        " WHERE t.transfer_id IS NULL"
+        "   AND t.id != ?"
+        "   AND t.account_id != ?"
+        "   AND t.type = ?"
+        "   AND t.amount_cents = ?"
+        "   AND ABS(julianday(t.date) - julianday(?)) <= ?"
+        " ORDER BY ABS(julianday(t.date) - julianday(?)) ASC, t.id DESC",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    sqlite3_bind_int64(stmt, 1, base->id);
+    sqlite3_bind_int64(stmt, 2, base->account_id);
+    sqlite3_bind_text(stmt, 3, need_type, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 4, base->amount_cents);
+    sqlite3_bind_text(stmt, 5, base->date, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 6, AUTO_LINK_DATE_WINDOW_DAYS);
+    sqlite3_bind_text(stmt, 7, base->date, -1, SQLITE_STATIC);
+
+    int cap = 8;
+    int count = 0;
+    link_scan_txn_t *rows = malloc((size_t)cap * sizeof(*rows));
+    if (!rows) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= cap) {
+            cap *= 2;
+            link_scan_txn_t *tmp =
+                realloc(rows, (size_t)cap * sizeof(*rows));
+            if (!tmp) {
+                free(rows);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            rows = tmp;
+        }
+
+        link_scan_txn_t *row = &rows[count++];
+        memset(row, 0, sizeof(*row));
+        row->id = sqlite3_column_int64(stmt, 0);
+        row->account_id = sqlite3_column_int64(stmt, 1);
+        const char *acct = (const char *)sqlite3_column_text(stmt, 2);
+        snprintf(row->account_name, sizeof(row->account_name), "%s",
+                 acct ? acct : "");
+        const char *type = (const char *)sqlite3_column_text(stmt, 3);
+        row->type = (type && strcmp(type, "INCOME") == 0) ? TRANSACTION_INCOME
+                                                            : TRANSACTION_EXPENSE;
+        row->amount_cents = sqlite3_column_int64(stmt, 4);
+        const char *date = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(row->date, sizeof(row->date), "%s", date ? date : "");
+        const char *payee = (const char *)sqlite3_column_text(stmt, 6);
+        snprintf(row->payee, sizeof(row->payee), "%s", payee ? payee : "");
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        free(rows);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(rows);
+        rows = NULL;
+    }
+    *out = rows;
+    return count;
+}
+
+static link_pick_result_t
+ui_pick_transfer_match(WINDOW *parent, const transaction_t *base,
+                       const char *base_account_name,
+                       const link_scan_txn_t *matches, int match_count,
+                       int *out_index) {
+    if (!parent || !base || !matches || match_count <= 0 || !out_index)
+        return LINK_PICK_SKIP;
+
+    int ph, pw;
+    getmaxyx(parent, ph, pw);
+    int win_h = 14;
+    int win_w = 92;
+    if (win_h > ph)
+        win_h = ph;
+    if (win_w > pw)
+        win_w = pw;
+    if (win_h < 8 || win_w < 44)
+        return LINK_PICK_SKIP;
+
+    int py, px;
+    getbegyx(parent, py, px);
+    WINDOW *w = newwin(win_h, win_w, py + (ph - win_h) / 2, px + (pw - win_w) / 2);
+    keypad(w, TRUE);
+    wbkgd(w, COLOR_PAIR(COLOR_FORM));
+
+    int sel = 0;
+    int scroll = 0;
+    int list_top = 5;
+    int list_rows = win_h - list_top - 2;
+    if (list_rows < 1)
+        list_rows = 1;
+
+    char amount[24];
+    ui_format_amount_plain(base->amount_cents, amount, sizeof(amount));
+
+    while (1) {
+        werase(w);
+        box(w, 0, 0);
+        mvwprintw(w, 0, 2, " Auto-link Transfers ");
+        mvwprintw(
+            w, 1, 2,
+            "Multiple matches found. Choose a transaction to link or skip.");
+        mvwprintw(w, 2, 2, "Current: %-14.14s | %s | %s | %s %s | %-.18s",
+                  base_account_name ? base_account_name : "", base->date,
+                  ui_txn_type_label(base->type), amount,
+                  (base->type == TRANSACTION_EXPENSE) ? "out" : "in",
+                  base->payee);
+        mvwprintw(w, 3, 2, "Keys: Enter=link  s=skip  Esc=cancel run");
+
+        if (sel < scroll)
+            scroll = sel;
+        if (sel >= scroll + list_rows)
+            scroll = sel - list_rows + 1;
+
+        for (int i = 0; i < list_rows; i++) {
+            int idx = scroll + i;
+            if (idx >= match_count)
+                break;
+            int row = list_top + i;
+            bool active = (idx == sel);
+            if (active)
+                wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+            mvwprintw(w, row, 2, "%-*s", win_w - 4, "");
+            mvwprintw(w, row, 2, "%2d) %-16.16s | %-10.10s | %-7.7s | %-.38s",
+                      idx + 1, matches[idx].account_name, matches[idx].date,
+                      ui_txn_type_label(matches[idx].type), matches[idx].payee);
+            if (active)
+                wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        }
+
+        if (scroll > 0)
+            mvwprintw(w, list_top, win_w - 2, "\u25b2");
+        if (scroll + list_rows < match_count)
+            mvwprintw(w, list_top + list_rows - 1, win_w - 2, "\u25bc");
+
+        wrefresh(w);
+        int ch = wgetch(w);
+        if (ui_requeue_resize_event(ch)) {
+            delwin(w);
+            touchwin(parent);
+            return LINK_PICK_CANCEL;
+        }
+
+        if (ch == KEY_UP || ch == 'k') {
+            if (sel > 0)
+                sel--;
+            continue;
+        }
+        if (ch == KEY_DOWN || ch == 'j') {
+            if (sel < match_count - 1)
+                sel++;
+            continue;
+        }
+        if (ch == '\n' || ch == KEY_ENTER) {
+            *out_index = sel;
+            delwin(w);
+            touchwin(parent);
+            return LINK_PICK_SELECT;
+        }
+        if (ch == 's' || ch == 'S') {
+            delwin(w);
+            touchwin(parent);
+            return LINK_PICK_SKIP;
+        }
+        if (ch == 27) {
+            delwin(w);
+            touchwin(parent);
+            return LINK_PICK_CANCEL;
+        }
+    }
+}
+
+static int ui_auto_link_transfers(WINDOW *parent, sqlite3 *db,
+                                  auto_link_result_t *out_result) {
+    if (!parent || !db || !out_result)
+        return -1;
+    memset(out_result, 0, sizeof(*out_result));
+
+    link_scan_txn_t *snapshot = NULL;
+    int n = ui_collect_unlinked_transactions(db, &snapshot);
+    if (n < 0)
+        return -1;
+
+    for (int i = 0; i < n; i++) {
+        transaction_t base = {0};
+        if (db_get_transaction_by_id(db, (int)snapshot[i].id, &base) != 0)
+            continue;
+        if (base.transfer_id != 0 || base.type == TRANSACTION_TRANSFER)
+            continue;
+        if (base.type != TRANSACTION_EXPENSE && base.type != TRANSACTION_INCOME)
+            continue;
+        out_result->scanned++;
+
+        link_scan_txn_t *matches = NULL;
+        int match_count = ui_find_transfer_matches(db, &base, &matches);
+        if (match_count < 0) {
+            free(snapshot);
+            return -1;
+        }
+        if (match_count == 0) {
+            free(matches);
+            continue;
+        }
+
+        int pick_idx = 0;
+        if (match_count > 1) {
+            out_result->ambiguous_prompts++;
+            link_pick_result_t pick =
+                ui_pick_transfer_match(parent, &base, snapshot[i].account_name,
+                                       matches, match_count, &pick_idx);
+            if (pick == LINK_PICK_CANCEL) {
+                out_result->cancelled = true;
+                free(matches);
+                break;
+            }
+            if (pick == LINK_PICK_SKIP) {
+                out_result->skipped++;
+                free(matches);
+                continue;
+            }
+        }
+
+        int64_t source_id = 0;
+        int64_t to_account_id = 0;
+        if (base.type == TRANSACTION_EXPENSE) {
+            source_id = base.id;
+            to_account_id = matches[pick_idx].account_id;
+        } else {
+            source_id = matches[pick_idx].id;
+            to_account_id = base.account_id;
+        }
+
+        transaction_t source = {0};
+        if (db_get_transaction_by_id(db, (int)source_id, &source) != 0) {
+            out_result->skipped++;
+            free(matches);
+            continue;
+        }
+        if (source.transfer_id != 0 || source.type == TRANSACTION_TRANSFER) {
+            out_result->skipped++;
+            free(matches);
+            continue;
+        }
+
+        source.type = TRANSACTION_TRANSFER;
+        source.category_id = 0;
+        source.payee[0] = '\0';
+        int rc = db_update_transfer(db, &source, to_account_id, true);
+        if (rc == 0)
+            out_result->linked++;
+        else
+            out_result->skipped++;
+
+        free(matches);
+    }
+
+    free(snapshot);
+    return 0;
+}
+
 static void ui_handle_input(int ch) {
     // When content is focused, delegate to the active content handler first
     if (state.content_focused) {
@@ -762,6 +1255,34 @@ static void ui_handle_input(int ch) {
             txn_list_mark_dirty(state.txn_list);
         if (n > 0 && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
+        ui_touch_layout_windows();
+    } break;
+    case 'L': {
+        if (!ui_confirm_auto_link_start(state.content))
+            break;
+
+        auto_link_result_t result = {0};
+        if (ui_auto_link_transfers(state.content, state.db, &result) < 0) {
+            ui_show_error_popup(state.content, " Auto-link Error ",
+                                "Failed while scanning/linking transactions.");
+            ui_touch_layout_windows();
+            break;
+        }
+
+        if (result.linked > 0 && state.txn_list)
+            txn_list_mark_dirty(state.txn_list);
+        if (result.linked > 0 && state.budget_list)
+            budget_list_mark_dirty(state.budget_list);
+
+        char line1[160];
+        char line2[160];
+        snprintf(line1, sizeof(line1),
+                 "Scanned: %d  Linked: %d  Skipped: %d", result.scanned,
+                 result.linked, result.skipped);
+        snprintf(line2, sizeof(line2),
+                 "Ambiguous prompts: %d%s", result.ambiguous_prompts,
+                 result.cancelled ? "  (run cancelled early)" : "");
+        ui_show_info_popup(state.content, " Auto-link Transfers ", line1, line2);
         ui_touch_layout_windows();
     } break;
     case 't':

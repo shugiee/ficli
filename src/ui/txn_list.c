@@ -1560,7 +1560,7 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
         return "Type to filter  Enter:done  Esc:clear";
 
     if (ls->txn_count == 0)
-        return "90d chart  1-9 acct  a add  /filter  s sort  \u2190 back";
+        return "90d chart  1-9 acct  a add  L auto-link  /filter  s sort  \u2190 back";
 
     const char *filter_tag = ls->filter_len > 0 ? "/filter[on]" : "/filter";
     const char *edit_tag =
@@ -1568,12 +1568,12 @@ const char *txn_list_status_hint(const txn_list_state_t *ls) {
                                                         : "e edit";
     if (ls->selected_count > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  %s  s sort  S dir  1-9 acct "
+                 "%d selected  90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  L auto-link  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  ls->selected_count, edit_tag, filter_tag);
     } else {
         snprintf(buf, sizeof(buf),
-                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  %s  s sort  S dir  1-9 acct "
+                 "90d chart  \u2191\u2193 move  ^d/^u half-page  space select  %s  c category  D duplicate  d delete  L auto-link  %s  s sort  S dir  1-9 acct "
                  " a add  \u2190 back",
                  edit_tag, filter_tag);
     }
