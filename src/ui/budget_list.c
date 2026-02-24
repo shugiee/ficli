@@ -831,12 +831,35 @@ static int row_color_pair(const budget_display_row_t *row) {
     return COLOR_EXPENSE;
 }
 
+static int utilization_highlight_color_pair(int utilization_bps) {
+    if (utilization_bps <= 10000)
+        return COLOR_HILITE_GOOD;
+    if (utilization_bps <= 12500)
+        return COLOR_HILITE_WARN;
+    return COLOR_HILITE_BAD;
+}
+
 static int running_delta_color_pair(int64_t running_delta_cents) {
     if (running_delta_cents > 0)
         return COLOR_INCOME;
     if (running_delta_cents < 0)
         return COLOR_EXPENSE;
     return COLOR_NORMAL;
+}
+
+static int draw_clipped_text(WINDOW *win, int row, int col, int max_col,
+                             const char *text) {
+    if (!win || !text || col >= max_col)
+        return col;
+    int room = max_col - col;
+    if (room <= 0)
+        return col;
+    int len = (int)strlen(text);
+    if (len > room)
+        len = room;
+    if (len > 0)
+        mvwaddnstr(win, row, col, text, len);
+    return col + len;
 }
 
 static void draw_bar(WINDOW *win, int row, int col, int width,
@@ -1571,33 +1594,58 @@ void budget_list_draw(budget_list_state_t *ls, WINDOW *win, bool focused) {
     if (ls->has_total_budget) {
         char spent_str[24];
         char budget_str[24];
-        char running_str[24];
         format_cents_plain(ls->total_spent_cents, false, spent_str,
                            sizeof(spent_str));
         format_cents_plain(ls->total_budget_cents, false, budget_str,
                            sizeof(budget_str));
-        format_cents_plain(ls->total_running_delta_cents, true, running_str,
-                           sizeof(running_str));
 
         int util_whole = ls->total_utilization_bps / 100;
         int util_frac = (ls->total_utilization_bps % 100) / 10;
         int expected_whole = ls->expected_bps / 100;
         int expected_frac = (ls->expected_bps % 100) / 10;
 
-        char summary[256];
-        if (ls->has_total_running_delta) {
-            snprintf(summary, sizeof(summary),
-                     "Total: %s / %s  %d.%d%%  Expected: %d.%d%%  Running: %s %s",
-                     spent_str, budget_str, util_whole, util_frac, expected_whole,
-                     expected_frac, running_str,
-                     ls->total_running_delta_cents >= 0 ? "surplus" : "deficit");
-        } else {
-            snprintf(summary, sizeof(summary),
-                     "Total: %s / %s  %d.%d%%  Expected: %d.%d%%", spent_str,
-                     budget_str, util_whole, util_frac, expected_whole,
-                     expected_frac);
+        char util_text[24];
+        snprintf(util_text, sizeof(util_text), "%d.%d%%", util_whole, util_frac);
+
+        int col = left;
+        int max_col = left + avail;
+        char summary_prefix[128];
+        snprintf(summary_prefix, sizeof(summary_prefix), "Total: %s / %s  ",
+                 spent_str, budget_str);
+        col = draw_clipped_text(win, summary_row, col, max_col, summary_prefix);
+
+        if (col < max_col) {
+            int util_color_pair =
+                utilization_highlight_color_pair(ls->total_utilization_bps);
+            wattron(win, COLOR_PAIR(util_color_pair) | A_BOLD);
+            col = draw_clipped_text(win, summary_row, col, max_col, util_text);
+            wattroff(win, COLOR_PAIR(util_color_pair) | A_BOLD);
         }
-        mvwprintw(win, summary_row, left, "%-*.*s", avail, avail, summary);
+
+        char summary_suffix[128];
+        snprintf(summary_suffix, sizeof(summary_suffix), "  Expected: %d.%d%%",
+                 expected_whole, expected_frac);
+        col = draw_clipped_text(win, summary_row, col, max_col, summary_suffix);
+
+        if (ls->has_total_running_delta) {
+            char running_str[24];
+            format_cents_plain(ls->total_running_delta_cents, true, running_str,
+                               sizeof(running_str));
+            col = draw_clipped_text(win, summary_row, col, max_col, "  Running ");
+            if (col < max_col) {
+                char running_text[64];
+                snprintf(running_text, sizeof(running_text), "%s %s",
+                         running_str,
+                         ls->total_running_delta_cents >= 0 ? "surplus"
+                                                             : "deficit");
+                int running_color = ls->total_running_delta_cents >= 0
+                                        ? COLOR_INCOME
+                                        : COLOR_EXPENSE;
+                wattron(win, COLOR_PAIR(running_color));
+                col = draw_clipped_text(win, summary_row, col, max_col, running_text);
+                wattroff(win, COLOR_PAIR(running_color));
+            }
+        }
     } else {
         mvwprintw(win, summary_row, left, "%-*.*s", avail, avail,
                   "Total: -- (no parent budget limits)");

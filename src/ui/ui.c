@@ -278,6 +278,9 @@ static void ui_apply_theme(bool dark_mode) {
     init_pair(COLOR_FORM_DROPDOWN, CUST_FG, CUST_SURFACE);
     init_pair(COLOR_ERROR, CUST_RED, CUST_BG);
     init_pair(COLOR_WARNING, CUST_YELLOW, CUST_BG);
+    init_pair(COLOR_HILITE_GOOD, CUST_BG, CUST_GREEN);
+    init_pair(COLOR_HILITE_WARN, CUST_BG, CUST_YELLOW);
+    init_pair(COLOR_HILITE_BAD, CUST_BG, CUST_RED);
 }
 
 static bool ui_size_is_supported(int rows, int cols) {

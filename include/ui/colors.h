@@ -26,3 +26,6 @@
 #define COLOR_FORM_DROPDOWN 10 // CUST_BG on CUST_SURFACE — dropdown layer
 #define COLOR_ERROR       11 // CUST_RED on CUST_BG — error borders/messages
 #define COLOR_WARNING     12 // CUST_YELLOW on CUST_BG — warning thresholds
+#define COLOR_HILITE_GOOD 13 // CUST_BG on CUST_GREEN — positive highlight chip
+#define COLOR_HILITE_WARN 14 // CUST_BG on CUST_YELLOW — warning highlight chip
+#define COLOR_HILITE_BAD  15 // CUST_BG on CUST_RED — danger highlight chip
