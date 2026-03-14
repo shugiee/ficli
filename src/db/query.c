@@ -1746,7 +1746,8 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
 
     sqlite3_stmt *stmt = NULL;
     rc = sqlite3_prepare_v2(
-        db, "SELECT transfer_id FROM transactions WHERE id = ?", -1, &stmt, NULL);
+        db, "SELECT transfer_id, type FROM transactions WHERE id = ?", -1, &stmt,
+        NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_update_transfer prepare load: %s\n", sqlite3_errmsg(db));
         goto rollback;
@@ -1754,10 +1755,18 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
     sqlite3_bind_int64(stmt, 1, txn->id);
 
     int64_t source_id = 0;
+    transaction_type_t source_type = txn->type;
     rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         if (sqlite3_column_type(stmt, 0) != SQLITE_NULL)
             source_id = sqlite3_column_int64(stmt, 0);
+        const char *row_type = (const char *)sqlite3_column_text(stmt, 1);
+        if (row_type && strcmp(row_type, "INCOME") == 0)
+            source_type = TRANSACTION_INCOME;
+        else if (row_type && strcmp(row_type, "EXPENSE") == 0)
+            source_type = TRANSACTION_EXPENSE;
+        else if (row_type && strcmp(row_type, "TRANSFER") == 0)
+            source_type = TRANSACTION_TRANSFER;
     } else if (rc == SQLITE_DONE) {
         sqlite3_finalize(stmt);
         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
@@ -1824,15 +1833,14 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
     if (mirror_id <= 0 && allow_existing_match) {
         rc = sqlite3_prepare_v2(
             db,
-            "SELECT id FROM transactions"
+            "SELECT id, type FROM transactions"
             " WHERE account_id = ?"
             "   AND id != ?"
             "   AND transfer_id IS NULL"
             "   AND type != 'TRANSFER'"
             "   AND amount_cents = ?"
             "   AND ABS(julianday(date) - julianday(?)) <= ?"
-            " ORDER BY ABS(julianday(date) - julianday(?)) ASC, id DESC"
-            " LIMIT 1",
+            " ORDER BY ABS(julianday(date) - julianday(?)) ASC, id DESC",
             -1, &stmt, NULL);
         if (rc != SQLITE_OK) {
             fprintf(stderr, "db_update_transfer prepare match existing: %s\n",
@@ -1845,17 +1853,47 @@ int db_update_transfer(sqlite3 *db, const transaction_t *txn,
         sqlite3_bind_text(stmt, 4, norm_date, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, 5, transfer_match_date_window_days);
         sqlite3_bind_text(stmt, 6, norm_date, -1, SQLITE_TRANSIENT);
-        rc = sqlite3_step(stmt);
-        if (rc == SQLITE_ROW) {
-            mirror_id = sqlite3_column_int64(stmt, 0);
-        } else if (rc != SQLITE_DONE) {
-            fprintf(stderr, "db_update_transfer step match existing: %s\n",
-                    sqlite3_errmsg(db));
-            sqlite3_finalize(stmt);
-            goto rollback;
+
+        int total = 0;
+        int opposite_count = 0;
+        int64_t first_match_id = 0;
+        int64_t opposite_match_id = 0;
+
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int64_t match_id = sqlite3_column_int64(stmt, 0);
+            const char *row_type = (const char *)sqlite3_column_text(stmt, 1);
+            transaction_type_t match_type =
+                (row_type && strcmp(row_type, "INCOME") == 0)
+                    ? TRANSACTION_INCOME
+                    : TRANSACTION_EXPENSE;
+
+            total++;
+            if (total == 1)
+                first_match_id = match_id;
+
+            if ((source_type == TRANSACTION_EXPENSE &&
+                 match_type == TRANSACTION_INCOME) ||
+                (source_type == TRANSACTION_INCOME &&
+                 match_type == TRANSACTION_EXPENSE)) {
+                opposite_count++;
+                if (opposite_count == 1)
+                    opposite_match_id = match_id;
+            }
         }
+
         sqlite3_finalize(stmt);
         stmt = NULL;
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "db_update_transfer step match existing: %s\n",
+                    sqlite3_errmsg(db));
+            goto rollback;
+        }
+
+        if (total == 1) {
+            mirror_id = first_match_id;
+        } else if (opposite_count == 1) {
+            mirror_id = opposite_match_id;
+        }
     }
 
     rc = sqlite3_prepare_v2(

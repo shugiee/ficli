@@ -878,9 +878,6 @@ static int ui_find_transfer_matches(sqlite3 *db, const transaction_t *base,
     if (base->type != TRANSACTION_EXPENSE && base->type != TRANSACTION_INCOME)
         return 0;
 
-    const char *need_type =
-        (base->type == TRANSACTION_EXPENSE) ? "INCOME" : "EXPENSE";
-
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(
         db,
@@ -891,7 +888,7 @@ static int ui_find_transfer_matches(sqlite3 *db, const transaction_t *base,
         " WHERE t.transfer_id IS NULL"
         "   AND t.id != ?"
         "   AND t.account_id != ?"
-        "   AND t.type = ?"
+        "   AND t.type != 'TRANSFER'"
         "   AND t.amount_cents = ?"
         "   AND ABS(julianday(t.date) - julianday(?)) <= ?"
         " ORDER BY ABS(julianday(t.date) - julianday(?)) ASC, t.id DESC",
@@ -901,11 +898,10 @@ static int ui_find_transfer_matches(sqlite3 *db, const transaction_t *base,
 
     sqlite3_bind_int64(stmt, 1, base->id);
     sqlite3_bind_int64(stmt, 2, base->account_id);
-    sqlite3_bind_text(stmt, 3, need_type, -1, SQLITE_STATIC);
-    sqlite3_bind_int64(stmt, 4, base->amount_cents);
-    sqlite3_bind_text(stmt, 5, base->date, -1, SQLITE_STATIC);
-    sqlite3_bind_int(stmt, 6, AUTO_LINK_DATE_WINDOW_DAYS);
-    sqlite3_bind_text(stmt, 7, base->date, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 3, base->amount_cents);
+    sqlite3_bind_text(stmt, 4, base->date, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 5, AUTO_LINK_DATE_WINDOW_DAYS);
+    sqlite3_bind_text(stmt, 6, base->date, -1, SQLITE_STATIC);
 
     int cap = 8;
     int count = 0;
@@ -1105,19 +1101,37 @@ static int ui_auto_link_transfers(WINDOW *parent, sqlite3 *db,
 
         int pick_idx = 0;
         if (match_count > 1) {
-            out_result->ambiguous_prompts++;
-            link_pick_result_t pick =
-                ui_pick_transfer_match(parent, &base, snapshot[i].account_name,
-                                       matches, match_count, &pick_idx);
-            if (pick == LINK_PICK_CANCEL) {
-                out_result->cancelled = true;
-                free(matches);
-                break;
+            int opposite_count = 0;
+            int opposite_idx = -1;
+            for (int j = 0; j < match_count; j++) {
+                if ((base.type == TRANSACTION_EXPENSE &&
+                     matches[j].type == TRANSACTION_INCOME) ||
+                    (base.type == TRANSACTION_INCOME &&
+                     matches[j].type == TRANSACTION_EXPENSE)) {
+                    opposite_count++;
+                    if (opposite_count == 1)
+                        opposite_idx = j;
+                }
             }
-            if (pick == LINK_PICK_SKIP) {
-                out_result->skipped++;
-                free(matches);
-                continue;
+
+            if (opposite_count == 1 && opposite_idx >= 0) {
+                pick_idx = opposite_idx;
+            } else {
+                out_result->ambiguous_prompts++;
+                link_pick_result_t pick =
+                    ui_pick_transfer_match(parent, &base,
+                                           snapshot[i].account_name, matches,
+                                           match_count, &pick_idx);
+                if (pick == LINK_PICK_CANCEL) {
+                    out_result->cancelled = true;
+                    free(matches);
+                    break;
+                }
+                if (pick == LINK_PICK_SKIP) {
+                    out_result->skipped++;
+                    free(matches);
+                    continue;
+                }
             }
         }
 

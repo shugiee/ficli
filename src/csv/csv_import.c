@@ -368,21 +368,38 @@ static csv_parse_result_t csv_parse_stream(FILE *f) {
             if (col_card >= 0 && col_card < rnc)
                 extract_last4(row_fields[col_card], row->card_last4);
 
-            // Debit → EXPENSE, Credit → INCOME
-            int64_t debit_cents = 0, credit_cents = 0;
-            if (col_debit >= 0 && col_debit < rnc && row_fields[col_debit][0])
-                parse_csv_amount(row_fields[col_debit], &debit_cents);
-            if (col_credit >= 0 && col_credit < rnc && row_fields[col_credit][0])
-                parse_csv_amount(row_fields[col_credit], &credit_cents);
+            // Prefer signed amount if provided; otherwise fall back to debit/credit
+            int64_t signed_amount = 0;
+            bool has_amount = false;
+            if (col_amount >= 0 && col_amount < rnc && row_fields[col_amount][0]) {
+                has_amount = parse_csv_amount(row_fields[col_amount], &signed_amount);
+            }
 
-            if (debit_cents > 0) {
-                row->amount_cents = debit_cents;
-                row->type = TRANSACTION_EXPENSE;
-            } else if (credit_cents > 0) {
-                row->amount_cents = credit_cents;
-                row->type = TRANSACTION_INCOME;
+            if (has_amount) {
+                if (signed_amount >= 0) {
+                    row->type = TRANSACTION_INCOME;
+                    row->amount_cents = signed_amount;
+                } else {
+                    row->type = TRANSACTION_EXPENSE;
+                    row->amount_cents = -signed_amount;
+                }
             } else {
-                continue; // skip rows with no amount
+                // Debit → EXPENSE, Credit → INCOME
+                int64_t debit_cents = 0, credit_cents = 0;
+                if (col_debit >= 0 && col_debit < rnc && row_fields[col_debit][0])
+                    parse_csv_amount(row_fields[col_debit], &debit_cents);
+                if (col_credit >= 0 && col_credit < rnc && row_fields[col_credit][0])
+                    parse_csv_amount(row_fields[col_credit], &credit_cents);
+
+                if (debit_cents > 0) {
+                    row->amount_cents = debit_cents;
+                    row->type = TRANSACTION_EXPENSE;
+                } else if (credit_cents > 0) {
+                    row->amount_cents = credit_cents;
+                    row->type = TRANSACTION_INCOME;
+                } else {
+                    continue; // skip rows with no amount
+                }
             }
         } else {
             // Checking/savings: single amount column
@@ -393,26 +410,13 @@ static csv_parse_result_t csv_parse_stream(FILE *f) {
                 continue;
             }
 
-            if (col_txn_type >= 0 && col_txn_type < rnc &&
-                row_fields[col_txn_type][0]) {
-                char norm_type[64];
-                normalize_col(row_fields[col_txn_type], norm_type, sizeof(norm_type));
-                if (strstr(norm_type, "credit") || strstr(norm_type, "deposit") ||
-                    strstr(norm_type, "income")) {
-                    row->type = TRANSACTION_INCOME;
-                } else {
-                    row->type = TRANSACTION_EXPENSE;
-                }
-                row->amount_cents = amount < 0 ? -amount : amount;
+            // Use sign of amount
+            if (amount >= 0) {
+                row->type = TRANSACTION_INCOME;
+                row->amount_cents = amount;
             } else {
-                // Use sign of amount
-                if (amount >= 0) {
-                    row->type = TRANSACTION_INCOME;
-                    row->amount_cents = amount;
-                } else {
-                    row->type = TRANSACTION_EXPENSE;
-                    row->amount_cents = -amount;
-                }
+                row->type = TRANSACTION_EXPENSE;
+                row->amount_cents = -amount;
             }
         }
 
@@ -674,7 +678,8 @@ static acct_txn_cache_t *get_acct_cache(sqlite3 *db, acct_txn_cache_t *caches,
 }
 
 // Find a unique unlinked counterparty transaction in another account with
-// matching date+amount and opposite EXPENSE/INCOME type.
+// matching date+amount. If multiple matches exist, prefer the unique opposite
+// direction (EXPENSE vs INCOME) when available.
 // Returns 0 when exactly one match exists, -2 when none/ambiguous, -1 on error.
 static int find_unique_transfer_counterparty(sqlite3 *db, int64_t account_id,
                                              const char *date,
@@ -689,16 +694,13 @@ static int find_unique_transfer_counterparty(sqlite3 *db, int64_t account_id,
     if (type != TRANSACTION_EXPENSE && type != TRANSACTION_INCOME)
         return -2;
 
-    const char *counterparty_type =
-        (type == TRANSACTION_EXPENSE) ? "INCOME" : "EXPENSE";
-
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(
         db,
-        "SELECT id, account_id FROM transactions"
+        "SELECT id, account_id, type FROM transactions"
         " WHERE account_id != ?"
         "   AND transfer_id IS NULL"
-        "   AND type = ?"
+        "   AND type != 'TRANSFER'"
         "   AND amount_cents = ?"
         "   AND ABS(julianday(date) - julianday(?)) <= ?"
         " ORDER BY ABS(julianday(date) - julianday(?)) ASC, id DESC",
@@ -710,41 +712,65 @@ static int find_unique_transfer_counterparty(sqlite3 *db, int64_t account_id,
     }
 
     sqlite3_bind_int64(stmt, 1, account_id);
-    sqlite3_bind_text(stmt, 2, counterparty_type, -1, SQLITE_STATIC);
-    sqlite3_bind_int64(stmt, 3, amount_cents);
-    sqlite3_bind_text(stmt, 4, date, -1, SQLITE_STATIC);
-    sqlite3_bind_int(stmt, 5, transfer_match_date_window_days);
-    sqlite3_bind_text(stmt, 6, date, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 2, amount_cents);
+    sqlite3_bind_text(stmt, 3, date, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 4, transfer_match_date_window_days);
+    sqlite3_bind_text(stmt, 5, date, -1, SQLITE_STATIC);
 
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_DONE) {
-        sqlite3_finalize(stmt);
-        return -2;
+    int total = 0;
+    int opposite_count = 0;
+    int64_t first_txn_id = 0;
+    int64_t first_account_id = 0;
+    int64_t opposite_txn_id = 0;
+    int64_t opposite_account_id = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int64_t txn_id = sqlite3_column_int64(stmt, 0);
+        int64_t acct_id = sqlite3_column_int64(stmt, 1);
+        const char *row_type = (const char *)sqlite3_column_text(stmt, 2);
+        transaction_type_t txn_type =
+            (row_type && strcmp(row_type, "INCOME") == 0) ? TRANSACTION_INCOME
+                                                           : TRANSACTION_EXPENSE;
+
+        total++;
+        if (total == 1) {
+            first_txn_id = txn_id;
+            first_account_id = acct_id;
+        }
+
+        if ((type == TRANSACTION_EXPENSE && txn_type == TRANSACTION_INCOME) ||
+            (type == TRANSACTION_INCOME && txn_type == TRANSACTION_EXPENSE)) {
+            opposite_count++;
+            if (opposite_count == 1) {
+                opposite_txn_id = txn_id;
+                opposite_account_id = acct_id;
+            }
+        }
     }
-    if (rc != SQLITE_ROW) {
-        fprintf(stderr, "find_unique_transfer_counterparty step first: %s\n",
-                sqlite3_errmsg(db));
-        sqlite3_finalize(stmt);
-        return -1;
-    }
 
-    int64_t matched_txn_id = sqlite3_column_int64(stmt, 0);
-    int64_t matched_account_id = sqlite3_column_int64(stmt, 1);
-
-    rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    if (rc == SQLITE_ROW) {
-        return -2;
-    }
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "find_unique_transfer_counterparty step second: %s\n",
+        fprintf(stderr, "find_unique_transfer_counterparty step: %s\n",
                 sqlite3_errmsg(db));
         return -1;
     }
 
-    *out_txn_id = matched_txn_id;
-    *out_account_id = matched_account_id;
-    return 0;
+    if (total == 0)
+        return -2;
+
+    if (total == 1) {
+        *out_txn_id = first_txn_id;
+        *out_account_id = first_account_id;
+        return 0;
+    }
+
+    if (opposite_count == 1) {
+        *out_txn_id = opposite_txn_id;
+        *out_account_id = opposite_account_id;
+        return 0;
+    }
+
+    return -2;
 }
 
 static int maybe_autolink_imported_transfer(sqlite3 *db, int64_t txn_id,
