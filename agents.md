@@ -135,6 +135,7 @@ make clean    # clean build artifacts
 - [ ] Make entire budget view scrollable, not the individual tables
 - [ ] Don't include transfers in the "Transactions" view header lines calculations
 - [ ] Delegate import logic across CPU cores for perf
+- [ ] Show "Category" and "Payee" summary pages for different time periods
 - [ ] Allow user to specify "This edit to the budget only applies to the current month"
 - [ ] Make edit Category popout larger
 - [ ] Add an "Assets" view to track physical assets
