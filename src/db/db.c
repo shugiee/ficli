@@ -50,10 +50,17 @@ static bool is_new_database(sqlite3 *db) {
     return !exists;
 }
 
-static bool transactions_has_column(sqlite3 *db, const char *column_name) {
+static bool table_has_column(sqlite3 *db, const char *table_name,
+                             const char *column_name) {
+    if (!table_name || table_name[0] == '\0' || !column_name ||
+        column_name[0] == '\0')
+        return false;
+
+    char sql[128];
+    snprintf(sql, sizeof(sql), "PRAGMA table_info(%s)", table_name);
+
     sqlite3_stmt *stmt = NULL;
-    int rc = sqlite3_prepare_v2(db, "PRAGMA table_info(transactions)", -1,
-                                &stmt, NULL);
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         return false;
     }
@@ -71,8 +78,51 @@ static bool transactions_has_column(sqlite3 *db, const char *column_name) {
 }
 
 static int migrate_schema(sqlite3 *db) {
-    if (!transactions_has_column(db, "reflection_date")) {
+    if (!table_has_column(db, "transactions", "reflection_date")) {
         if (exec_sql(db, "ALTER TABLE transactions ADD COLUMN reflection_date TEXT;") != 0)
+            return -1;
+    }
+
+    if (!table_has_column(db, "loan_profiles", "split_principal_cents")) {
+        if (exec_sql(db,
+                     "ALTER TABLE loan_profiles"
+                     " ADD COLUMN split_principal_cents INTEGER NOT NULL DEFAULT 0;") !=
+            0)
+            return -1;
+    }
+    if (!table_has_column(db, "loan_profiles", "split_interest_cents")) {
+        if (exec_sql(db,
+                     "ALTER TABLE loan_profiles"
+                     " ADD COLUMN split_interest_cents INTEGER NOT NULL DEFAULT 0;") !=
+            0)
+            return -1;
+    }
+    if (!table_has_column(db, "loan_profiles", "split_escrow_cents")) {
+        if (exec_sql(db,
+                     "ALTER TABLE loan_profiles"
+                     " ADD COLUMN split_escrow_cents INTEGER NOT NULL DEFAULT 0;") !=
+            0)
+            return -1;
+    }
+    if (!table_has_column(db, "loan_profiles", "split_principal_category_id")) {
+        if (exec_sql(
+                db,
+                "ALTER TABLE loan_profiles ADD COLUMN split_principal_category_id INTEGER;") !=
+            0)
+            return -1;
+    }
+    if (!table_has_column(db, "loan_profiles", "split_interest_category_id")) {
+        if (exec_sql(
+                db,
+                "ALTER TABLE loan_profiles ADD COLUMN split_interest_category_id INTEGER;") !=
+            0)
+            return -1;
+    }
+    if (!table_has_column(db, "loan_profiles", "split_escrow_category_id")) {
+        if (exec_sql(
+                db,
+                "ALTER TABLE loan_profiles ADD COLUMN split_escrow_category_id INTEGER;") !=
+            0)
             return -1;
     }
 
@@ -88,9 +138,28 @@ static int migrate_schema(sqlite3 *db) {
         "    initial_principal_cents INTEGER NOT NULL,"
         "    scheduled_payment_cents INTEGER NOT NULL,"
         "    payment_day INTEGER NOT NULL DEFAULT 1 CHECK(payment_day BETWEEN 1 AND 28),"
+        "    split_principal_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_interest_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_escrow_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_principal_category_id INTEGER,"
+        "    split_interest_category_id INTEGER,"
+        "    split_escrow_category_id INTEGER,"
         "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
         "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE"
+        "    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,"
+        "    FOREIGN KEY (split_principal_category_id) REFERENCES categories(id),"
+        "    FOREIGN KEY (split_interest_category_id) REFERENCES categories(id),"
+        "    FOREIGN KEY (split_escrow_category_id) REFERENCES categories(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS transaction_splits ("
+        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "    transaction_id INTEGER NOT NULL,"
+        "    category_id INTEGER,"
+        "    amount_cents INTEGER NOT NULL,"
+        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+        "    FOREIGN KEY (transaction_id) REFERENCES transactions(id)"
+        "      ON DELETE CASCADE,"
+        "    FOREIGN KEY (category_id) REFERENCES categories(id)"
         ");"
         "CREATE TABLE IF NOT EXISTS budget_filter_settings ("
         "    id INTEGER PRIMARY KEY CHECK(id = 1),"
@@ -113,6 +182,10 @@ static int migrate_schema(sqlite3 *db) {
         " VALUES (1, 'EXCLUDE_SELECTED');"
         "CREATE INDEX IF NOT EXISTS idx_loan_profiles_account"
         " ON loan_profiles(account_id);"
+        "CREATE INDEX IF NOT EXISTS idx_transaction_splits_txn"
+        " ON transaction_splits(transaction_id);"
+        "CREATE INDEX IF NOT EXISTS idx_transaction_splits_category"
+        " ON transaction_splits(category_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_effective_date"
         " ON transactions(COALESCE(reflection_date, date));"
         "CREATE INDEX IF NOT EXISTS idx_budget_month_overrides_month"
@@ -120,7 +193,7 @@ static int migrate_schema(sqlite3 *db) {
 }
 
 static int create_schema(sqlite3 *db) {
-    const char *schema_sql =
+    const char *schema_sql_core =
         "CREATE TABLE IF NOT EXISTS accounts ("
         "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "    name TEXT NOT NULL UNIQUE,"
@@ -174,9 +247,28 @@ static int create_schema(sqlite3 *db) {
         "    initial_principal_cents INTEGER NOT NULL,"
         "    scheduled_payment_cents INTEGER NOT NULL,"
         "    payment_day INTEGER NOT NULL DEFAULT 1 CHECK(payment_day BETWEEN 1 AND 28),"
+        "    split_principal_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_interest_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_escrow_cents INTEGER NOT NULL DEFAULT 0,"
+        "    split_principal_category_id INTEGER,"
+        "    split_interest_category_id INTEGER,"
+        "    split_escrow_category_id INTEGER,"
         "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
         "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE"
+        "    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,"
+        "    FOREIGN KEY (split_principal_category_id) REFERENCES categories(id),"
+        "    FOREIGN KEY (split_interest_category_id) REFERENCES categories(id),"
+        "    FOREIGN KEY (split_escrow_category_id) REFERENCES categories(id)"
+        ");"
+
+        "CREATE TABLE IF NOT EXISTS transaction_splits ("
+        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "    transaction_id INTEGER NOT NULL,"
+        "    category_id INTEGER,"
+        "    amount_cents INTEGER NOT NULL,"
+        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+        "    FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,"
+        "    FOREIGN KEY (category_id) REFERENCES categories(id)"
         ");"
 
         "CREATE TABLE IF NOT EXISTS budget_filter_settings ("
@@ -197,13 +289,16 @@ static int create_schema(sqlite3 *db) {
         "    limit_cents INTEGER NOT NULL,"
         "    UNIQUE(category_id, month),"
         "    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE"
-        ");"
+        ");";
 
+    const char *schema_sql_indexes =
         "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id);"
         "CREATE INDEX IF NOT EXISTS idx_transactions_effective_date ON transactions(COALESCE(reflection_date, date));"
+        "CREATE INDEX IF NOT EXISTS idx_transaction_splits_txn ON transaction_splits(transaction_id);"
+        "CREATE INDEX IF NOT EXISTS idx_transaction_splits_category ON transaction_splits(category_id);"
         "CREATE INDEX IF NOT EXISTS idx_loan_profiles_account ON loan_profiles(account_id);"
         "CREATE INDEX IF NOT EXISTS idx_budgets_month ON budgets(month);"
         "CREATE INDEX IF NOT EXISTS idx_budget_month_overrides_month ON budget_month_overrides(month);"
@@ -212,7 +307,9 @@ static int create_schema(sqlite3 *db) {
         "INSERT OR IGNORE INTO budget_filter_settings (id, mode)"
         " VALUES (1, 'EXCLUDE_SELECTED');";
 
-    return exec_sql(db, schema_sql);
+    if (exec_sql(db, schema_sql_core) != 0)
+        return -1;
+    return exec_sql(db, schema_sql_indexes);
 }
 
 static int seed_defaults(sqlite3 *db) {

@@ -4,6 +4,7 @@
 #include "models/account.h"
 #include "ui/colors.h"
 #include "ui/error_popup.h"
+#include "ui/form.h"
 #include "ui/resize.h"
 
 #include <ctype.h>
@@ -20,6 +21,7 @@ typedef enum {
     LOAN_FIELD_INITIAL,
     LOAN_FIELD_PAYMENT,
     LOAN_FIELD_DAY,
+    LOAN_FIELD_SPLIT_ESCROW,
     LOAN_FIELD_SUBMIT,
     LOAN_FIELD_COUNT,
 } loan_field_t;
@@ -36,6 +38,8 @@ struct loan_list_state {
 
     bool has_next_due;
     char next_due_date[11];
+    bool has_remaining_principal;
+    int64_t remaining_principal_cents;
 
     int cursor;
     int scroll_offset;
@@ -306,7 +310,10 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
         win_h = ph;
     if (win_w > pw)
         win_w = pw;
-    if (win_h < 12 || win_w < 48) {
+    win_h = 21;
+    if (win_h > ph)
+        win_h = ph;
+    if (win_h < 14 || win_w < 48) {
         free(accounts);
         return false;
     }
@@ -340,6 +347,7 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
     char initial[24] = "";
     char payment[24] = "";
     char day[8] = "1";
+    char split_escrow[24] = "0.00";
     if (is_edit) {
         snprintf(start_date, sizeof(start_date), "%s", existing->start_date);
         snprintf(rate, sizeof(rate), "%d.%02d", existing->interest_rate_bps / 100,
@@ -351,6 +359,9 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
                  (long)(existing->scheduled_payment_cents / 100),
                  (long)(existing->scheduled_payment_cents % 100));
         snprintf(day, sizeof(day), "%d", existing->payment_day);
+        snprintf(split_escrow, sizeof(split_escrow), "%ld.%02ld",
+                 (long)(existing->split_escrow_cents / 100),
+                 (long)(existing->split_escrow_cents % 100));
     }
 
     int start_pos = (int)strlen(start_date);
@@ -358,6 +369,7 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
     int initial_pos = (int)strlen(initial);
     int payment_pos = (int)strlen(payment);
     int day_pos = (int)strlen(day);
+    int split_escrow_pos = (int)strlen(split_escrow);
 
     loan_field_t field = is_edit ? LOAN_FIELD_KIND : LOAN_FIELD_ACCOUNT;
     char error[96] = "";
@@ -430,6 +442,14 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
         mvwprintw(w, row, field_col, "%-4s", day);
         if (field == LOAN_FIELD_DAY)
             wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        row += 1;
+
+        mvwprintw(w, row, label_col, "Escrow split:");
+        if (field == LOAN_FIELD_SPLIT_ESCROW)
+            wattron(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
+        mvwprintw(w, row, field_col, "%-12s", split_escrow);
+        if (field == LOAN_FIELD_SPLIT_ESCROW)
+            wattroff(w, COLOR_PAIR(COLOR_FORM_ACTIVE));
         row += 2;
 
         if (field == LOAN_FIELD_SUBMIT)
@@ -473,6 +493,10 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
             case LOAN_FIELD_DAY:
                 cursor_y = 10;
                 cursor_x += day_pos;
+                break;
+            case LOAN_FIELD_SPLIT_ESCROW:
+                cursor_y = 11;
+                cursor_x += split_escrow_pos;
                 break;
             default:
                 cursor_y = 6;
@@ -534,6 +558,7 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
             int rate_bps = 0;
             int64_t initial_cents = 0;
             int64_t payment_cents = 0;
+            int64_t split_escrow_cents = 0;
             int payment_day = 0;
             if (!validate_iso_date(start_date)) {
                 snprintf(error, sizeof(error), "Start date must be YYYY-MM-DD");
@@ -560,6 +585,27 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
                 field = LOAN_FIELD_DAY;
                 continue;
             }
+            if (!parse_cents_input(split_escrow, &split_escrow_cents) ||
+                split_escrow_cents < 0) {
+                snprintf(error, sizeof(error), "Invalid escrow split amount");
+                field = LOAN_FIELD_SPLIT_ESCROW;
+                continue;
+            }
+            if (split_escrow_cents >= payment_cents) {
+                snprintf(error, sizeof(error),
+                         "Escrow must be less than scheduled payment");
+                field = LOAN_FIELD_SPLIT_ESCROW;
+                continue;
+            }
+
+            int64_t principal_cat = 0;
+            int64_t interest_cat = 0;
+            int64_t escrow_cat = 0;
+            if (db_ensure_loan_split_categories(ls->db, kind, &principal_cat,
+                                                &interest_cat, &escrow_cat) != 0) {
+                snprintf(error, sizeof(error), "Failed to create split categories");
+                continue;
+            }
 
             loan_profile_t profile = {0};
             profile.account_id = accounts[account_idx].id;
@@ -570,6 +616,12 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
             profile.initial_principal_cents = initial_cents;
             profile.scheduled_payment_cents = payment_cents;
             profile.payment_day = payment_day;
+            profile.split_principal_cents = 0;
+            profile.split_interest_cents = 0;
+            profile.split_escrow_cents = split_escrow_cents;
+            profile.split_principal_category_id = principal_cat;
+            profile.split_interest_category_id = interest_cat;
+            profile.split_escrow_category_id = split_escrow_cents > 0 ? escrow_cat : 0;
 
             int rc = db_upsert_loan_profile(ls->db, &profile);
             if (rc != 0) {
@@ -598,6 +650,10 @@ static bool show_profile_form(loan_list_state_t *ls, WINDOW *parent,
             break;
         case LOAN_FIELD_DAY:
             handle_text_input(day, &day_pos, (int)sizeof(day), ch, false);
+            break;
+        case LOAN_FIELD_SPLIT_ESCROW:
+            handle_text_input(split_escrow, &split_escrow_pos,
+                              (int)sizeof(split_escrow), ch, true);
             break;
         default:
             break;
@@ -642,6 +698,8 @@ static void reload(loan_list_state_t *ls) {
     ls->txn_count = 0;
     ls->has_next_due = false;
     ls->next_due_date[0] = '\0';
+    ls->has_remaining_principal = false;
+    ls->remaining_principal_cents = 0;
 
     if (ls->profile_count > 0) {
         int64_t account_id = ls->profiles[ls->profile_sel].account_id;
@@ -651,6 +709,10 @@ static void reload(loan_list_state_t *ls) {
 
         if (db_get_next_loan_payment_date(ls->db, account_id, ls->next_due_date) == 0)
             ls->has_next_due = true;
+
+        if (db_get_loan_remaining_principal_cents(
+                ls->db, account_id, &ls->remaining_principal_cents) == 0)
+            ls->has_remaining_principal = true;
     }
 
     int dcount = display_count(ls);
@@ -714,10 +776,16 @@ void loan_list_draw(loan_list_state_t *ls, WINDOW *win, bool focused) {
     const loan_profile_t *profile = &ls->profiles[ls->profile_sel];
     char principal[24];
     char scheduled[24];
+    char split_escrow[24];
+    char remaining_principal[24];
     format_signed_cents(profile->initial_principal_cents, false, principal,
                         sizeof(principal));
     format_signed_cents(profile->scheduled_payment_cents, false, scheduled,
                         sizeof(scheduled));
+    format_signed_cents(profile->split_escrow_cents, false, split_escrow,
+                        sizeof(split_escrow));
+    format_signed_cents(ls->remaining_principal_cents, false, remaining_principal,
+                        sizeof(remaining_principal));
 
     mvwprintw(win, 3, 2, "Loan %d/%d  Account: %s  Kind: %s", ls->profile_sel + 1,
               ls->profile_count, profile->account_name,
@@ -727,10 +795,14 @@ void loan_list_draw(loan_list_state_t *ls, WINDOW *win, bool focused) {
               profile->start_date, profile->interest_rate_bps / 100,
               profile->interest_rate_bps % 100, principal, scheduled,
               profile->payment_day, ls->has_next_due ? ls->next_due_date : "(n/a)");
+    mvwprintw(win, 5, 2, "Escrow: %s  Principal/Interest: auto amortized",
+              split_escrow);
+    mvwprintw(win, 6, 2, "Remaining principal: %s",
+              ls->has_remaining_principal ? remaining_principal : "(n/a)");
 
-    int header_row = 6;
-    int rule_row = 7;
-    int data_start = 8;
+    int header_row = 8;
+    int rule_row = 9;
+    int data_start = 10;
     int visible_rows = h - data_start - 1;
     if (visible_rows < 1)
         visible_rows = 1;
@@ -780,20 +852,25 @@ void loan_list_draw(loan_list_state_t *ls, WINDOW *win, bool focused) {
         if (idx >= dcount)
             break;
         int row = data_start + i;
+        bool is_phantom = (idx == 0);
         bool selected = (idx == ls->cursor && focused);
-        if (selected)
+        if (is_phantom) {
+            if (selected)
+                wattron(win, COLOR_PAIR(COLOR_STATUS));
+            else
+                wattron(win, COLOR_PAIR(COLOR_STATUS) | A_DIM);
+        } else if (selected) {
             wattron(win, COLOR_PAIR(COLOR_SELECTED));
+        }
 
         mvwprintw(win, row, 2, "%*s", w - 4, "");
-        if (idx == 0) {
+        if (is_phantom) {
             char amt[24];
             format_signed_cents(-profile->scheduled_payment_cents, false, amt,
                                 sizeof(amt));
             mvwprintw(win, row, date_col, "%-*s", date_w,
                       ls->has_next_due ? ls->next_due_date : "(n/a)");
-            wattron(win, COLOR_PAIR(COLOR_WARNING));
             mvwprintw(win, row, amount_col, "%*.*s", amount_w, amount_w, amt);
-            wattroff(win, COLOR_PAIR(COLOR_WARNING));
             mvwprintw(win, row, payee_col, "%-*.*s", payee_w, payee_w,
                       "[Next Payment]");
             mvwprintw(win, row, desc_col, "%-*.*s", desc_w, desc_w,
@@ -807,21 +884,31 @@ void loan_list_draw(loan_list_state_t *ls, WINDOW *win, bool focused) {
             format_signed_cents(signed_cents, true, amt, sizeof(amt));
 
             mvwprintw(win, row, date_col, "%-*.*s", date_w, date_w, t->effective_date);
-            if (t->type == TRANSACTION_EXPENSE)
-                wattron(win, COLOR_PAIR(COLOR_EXPENSE));
-            else if (t->type == TRANSACTION_INCOME)
-                wattron(win, COLOR_PAIR(COLOR_INCOME));
+            if (!selected) {
+                if (t->type == TRANSACTION_EXPENSE)
+                    wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+                else if (t->type == TRANSACTION_INCOME)
+                    wattron(win, COLOR_PAIR(COLOR_INCOME));
+            }
             mvwprintw(win, row, amount_col, "%*.*s", amount_w, amount_w, amt);
-            if (t->type == TRANSACTION_EXPENSE)
-                wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
-            else if (t->type == TRANSACTION_INCOME)
-                wattroff(win, COLOR_PAIR(COLOR_INCOME));
+            if (!selected) {
+                if (t->type == TRANSACTION_EXPENSE)
+                    wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+                else if (t->type == TRANSACTION_INCOME)
+                    wattroff(win, COLOR_PAIR(COLOR_INCOME));
+            }
             mvwprintw(win, row, payee_col, "%-*.*s", payee_w, payee_w, t->payee);
             mvwprintw(win, row, desc_col, "%-*.*s", desc_w, desc_w, t->description);
         }
 
-        if (selected)
+        if (is_phantom) {
+            if (selected)
+                wattroff(win, COLOR_PAIR(COLOR_STATUS));
+            else
+                wattroff(win, COLOR_PAIR(COLOR_STATUS) | A_DIM);
+        } else if (selected) {
             wattroff(win, COLOR_PAIR(COLOR_SELECTED));
+        }
     }
 }
 
@@ -844,6 +931,33 @@ bool loan_list_handle_input(loan_list_state_t *ls, WINDOW *parent, int ch) {
     case 'e':
         if (ls->profile_count <= 0)
             return true;
+        if (ls->cursor <= 0 || ls->cursor > ls->txn_count) {
+            ui_show_error_popup(parent, " Loans ",
+                                "Select an existing transaction row to edit");
+            return true;
+        }
+        {
+            const txn_row_t *row = &ls->transactions[ls->cursor - 1];
+            transaction_t txn = {0};
+            int rc = db_get_transaction_by_id(ls->db, (int)row->id, &txn);
+            if (rc == 0) {
+                form_result_t res = form_transaction(parent, ls->db, &txn, true);
+                if (res == FORM_SAVED) {
+                    ls->dirty = true;
+                    ls->changed = true;
+                    snprintf(ls->message, sizeof(ls->message),
+                             "Transaction updated");
+                }
+            } else {
+                ui_show_error_popup(parent, " Loans ",
+                                    "Failed to load selected transaction");
+                ls->dirty = true;
+            }
+        }
+        return true;
+    case 'E':
+        if (ls->profile_count <= 0)
+            return true;
         if (show_profile_form(ls, parent, &ls->profiles[ls->profile_sel])) {
             ls->dirty = true;
             ls->changed = true;
@@ -851,6 +965,39 @@ bool loan_list_handle_input(loan_list_state_t *ls, WINDOW *parent, int ch) {
         }
         return true;
     case 'd':
+        if (ls->profile_count <= 0)
+            return true;
+        if (ls->cursor <= 0 || ls->cursor > ls->txn_count) {
+            ui_show_error_popup(parent, " Loans ",
+                                "Select an existing transaction row to delete");
+            return true;
+        }
+        {
+            const txn_row_t *row = &ls->transactions[ls->cursor - 1];
+            char line1[96];
+            char line2[96];
+            snprintf(line1, sizeof(line1), "Delete selected transaction?");
+            snprintf(line2, sizeof(line2), "%.10s  %.72s", row->effective_date,
+                     row->payee[0] ? row->payee : "(no payee)");
+            if (!confirm_simple(parent, " Delete Transaction ", line1, line2,
+                                "y:Delete  n:Cancel")) {
+                return true;
+            }
+            int rc = db_delete_transaction(ls->db, (int)row->id);
+            if (rc == 0) {
+                ls->dirty = true;
+                ls->changed = true;
+                if (ls->cursor > 0)
+                    ls->cursor--;
+                snprintf(ls->message, sizeof(ls->message),
+                         "Transaction deleted");
+            } else {
+                ui_show_error_popup(parent, " Loans ",
+                                    "Failed to delete selected transaction");
+            }
+        }
+        return true;
+    case 'D':
         if (ls->profile_count <= 0)
             return true;
         {
@@ -906,7 +1053,21 @@ bool loan_list_handle_input(loan_list_state_t *ls, WINDOW *parent, int ch) {
             char line2[96];
             snprintf(line1, sizeof(line1), "Post next payment (%s) on %s?", amt,
                      ls->has_next_due ? ls->next_due_date : "(n/a)");
-            snprintf(line2, sizeof(line2), "Account: %s", p->account_name);
+            int64_t principal_cents = 0;
+            int64_t interest_cents = 0;
+            int64_t escrow_cents = 0;
+            if (db_get_next_loan_payment_breakdown(ls->db, p->account_id,
+                                                   &principal_cents,
+                                                   &interest_cents,
+                                                   &escrow_cents) == 0) {
+                char sp[24], si[24], se[24];
+                format_signed_cents(principal_cents, false, sp, sizeof(sp));
+                format_signed_cents(interest_cents, false, si, sizeof(si));
+                format_signed_cents(escrow_cents, false, se, sizeof(se));
+                snprintf(line2, sizeof(line2), "P:%s I:%s E:%s", sp, si, se);
+            } else {
+                snprintf(line2, sizeof(line2), "Using amortized principal/interest");
+            }
             if (!confirm_simple(parent, " Enact Loan Payment ", line1, line2,
                                 "y:Post payment  n:Cancel")) {
                 return true;
@@ -941,12 +1102,12 @@ const char *loan_list_status_hint(const loan_list_state_t *ls) {
     if (!ls)
         return "";
     if (ls->cursor == -1)
-        return "Enter add-profile  j/k move  n add  <- back";
+        return "Enter add-profile  j/k move  n add  E edit-loan  D del-loan  <- back";
     if (ls->profile_count <= 0)
         return "Enter add-profile  n add  <- back";
     if (ls->cursor == 0)
-        return "1-9 loan  j/k move  Enter enact-payment  n add  e edit  d delete  <- back";
-    return "1-9 loan  j/k move  Enter add-profile  n add  e edit  d delete  <- back";
+        return "1-9 loan  j/k move  Enter enact-payment  n add  E edit-loan  D del-loan  <- back";
+    return "1-9 loan  j/k move  e edit-txn  d del-txn  E edit-loan  D del-loan  <- back";
 }
 
 void loan_list_mark_dirty(loan_list_state_t *ls) {

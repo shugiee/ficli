@@ -34,7 +34,21 @@ typedef struct {
     int64_t initial_principal_cents;
     int64_t scheduled_payment_cents;
     int payment_day;
+    int64_t split_principal_cents;
+    int64_t split_interest_cents;
+    int64_t split_escrow_cents;
+    int64_t split_principal_category_id;
+    int64_t split_interest_category_id;
+    int64_t split_escrow_category_id;
 } loan_profile_t;
+
+typedef struct {
+    int64_t id;
+    int64_t transaction_id;
+    int64_t category_id;
+    int64_t amount_cents;
+    char category_name[64];
+} txn_split_t;
 
 // Fetch loan profiles with account names. Caller frees *out.
 // Returns count, -1 on error.
@@ -61,6 +75,44 @@ int db_get_next_loan_payment_date(sqlite3 *db, int64_t account_id,
 // Enact the next scheduled loan payment as an EXPENSE transaction. Returns
 // inserted transaction id, -2 not found, -1 on error.
 int64_t db_enact_loan_payment(sqlite3 *db, int64_t account_id);
+
+// Compute the amortized split breakdown for the next scheduled payment.
+// Outputs principal, interest, and escrow components in cents.
+// Returns 0 success, -2 not found, -1 error.
+int db_get_next_loan_payment_breakdown(sqlite3 *db, int64_t account_id,
+                                       int64_t *out_principal_cents,
+                                       int64_t *out_interest_cents,
+                                       int64_t *out_escrow_cents);
+
+// Compute remaining principal after all enacted loan payments for account.
+// Returns 0 success, -2 not found, -1 error.
+int db_get_loan_remaining_principal_cents(sqlite3 *db, int64_t account_id,
+                                          int64_t *out_remaining_cents);
+
+// Ensure standard loan split categories exist for a loan kind.
+// For both loan kinds: principal + interest + escrow categories are populated
+// under either "Auto Loan" or "Mortgage".
+// Returns 0 on success, -1 on error.
+int db_ensure_loan_split_categories(sqlite3 *db, loan_kind_t loan_kind,
+                                    int64_t *out_principal_category_id,
+                                    int64_t *out_interest_category_id,
+                                    int64_t *out_escrow_category_id);
+
+// Fetch split rows for one transaction. Caller frees *out.
+// Returns count, -1 on error.
+int db_get_transaction_splits(sqlite3 *db, int64_t transaction_id,
+                              txn_split_t **out);
+
+// Replace split rows for one transaction atomically.
+// Validation rules:
+// - transaction must exist and be EXPENSE/INCOME
+// - split_count must be > 0
+// - each split amount must be > 0
+// - sum(split amounts) must equal transaction amount
+// Returns 0 on success, -2 not found, -3 invalid transaction type,
+// -4 invalid splits, -1 on error.
+int db_replace_transaction_splits(sqlite3 *db, int64_t transaction_id,
+                                  const txn_split_t *splits, int split_count);
 
 // Fetch categories by type. Produces "Parent:Child" display names via JOIN.
 // Caller frees *out. Returns count, -1 on error.

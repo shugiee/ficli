@@ -42,6 +42,10 @@ static const char *transaction_type_to_str(transaction_type_t type) {
     return transaction_type_db_strings[type];
 }
 
+static bool transaction_type_is_flow(transaction_type_t type) {
+    return type == TRANSACTION_EXPENSE || type == TRANSACTION_INCOME;
+}
+
 static loan_kind_t loan_kind_from_str(const char *s) {
     if (s && strcmp(s, "MORTGAGE") == 0)
         return LOAN_KIND_MORTGAGE;
@@ -1422,6 +1426,10 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
         "  COALESCE(t.reflection_date, t.date),"
         "  CASE"
         "    WHEN t.type = 'TRANSFER' THEN COALESCE(ta.name, '(transfer)')"
+        "    WHEN EXISTS("
+        "      SELECT 1 FROM transaction_splits ts"
+        "      WHERE ts.transaction_id = t.id"
+        "    ) THEN '[Split]'"
         "    WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
         "    ELSE COALESCE(c.name, '')"
         "  END,"
@@ -1507,17 +1515,17 @@ int db_get_report_rows(sqlite3 *db, report_group_t group, report_period_t period
         label_expr =
             "CASE"
             "  WHEN c.id IS NULL THEN 'Uncategorized'"
-            "  WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+            "  WHEN pc.name IS NOT NULL THEN pc.name || ':' || c.name"
             "  ELSE c.name"
             " END";
         join_clause =
-            " LEFT JOIN categories c ON c.id = t.category_id"
-            " LEFT JOIN categories p ON p.id = c.parent_id";
+            " LEFT JOIN categories c ON c.id = p.category_id"
+            " LEFT JOIN categories pc ON pc.id = c.parent_id";
     } else if (group == REPORT_GROUP_PAYEE) {
         label_expr =
             "CASE"
-            "  WHEN t.payee IS NULL OR trim(t.payee) = '' THEN '(No payee)'"
-            "  ELSE t.payee"
+            "  WHEN p.payee IS NULL OR trim(p.payee) = '' THEN '(No payee)'"
+            "  ELSE p.payee"
             " END";
     } else {
         return -1;
@@ -1526,16 +1534,37 @@ int db_get_report_rows(sqlite3 *db, report_group_t group, report_period_t period
     char sql[4096];
     snprintf(
         sql, sizeof(sql),
+        "WITH tx_flags AS ("
+        "  SELECT t.id, EXISTS("
+        "    SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+        "  ) AS has_splits"
+        "  FROM transactions t"
+        "),"
+        "postings AS ("
+        "  SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+        "         t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+        "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+        "  FROM transactions t"
+        "  JOIN tx_flags f ON f.id = t.id"
+        "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+        "  UNION ALL"
+        "  SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+        "         ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+        "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+        "  FROM transactions t"
+        "  JOIN tx_flags f ON f.id = t.id"
+        "  JOIN transaction_splits ts ON ts.transaction_id = t.id"
+        "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+        ")"
         "SELECT %s AS label,"
-        "       COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount_cents ELSE 0 END), 0),"
-        "       COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount_cents ELSE 0 END), 0),"
-        "       COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount_cents ELSE -t.amount_cents END), 0),"
+        "       COALESCE(SUM(CASE WHEN p.type = 'EXPENSE' THEN p.amount_cents ELSE 0 END), 0),"
+        "       COALESCE(SUM(CASE WHEN p.type = 'INCOME' THEN p.amount_cents ELSE 0 END), 0),"
+        "       COALESCE(SUM(CASE WHEN p.type = 'INCOME' THEN p.amount_cents ELSE -p.amount_cents END), 0),"
         "       COUNT(*)"
-        " FROM transactions t"
+        " FROM postings p"
         "%s"
-        " WHERE t.type IN ('EXPENSE', 'INCOME')"
-        "   AND COALESCE(t.reflection_date, t.date) >= %s"
-        "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+        " WHERE p.effective_date >= %s"
+        "   AND p.effective_date <= date('now', 'localtime')"
         " GROUP BY label"
         " ORDER BY label COLLATE NOCASE",
         label_expr, join_clause, start_expr);
@@ -1604,7 +1633,7 @@ int db_get_report_transactions(sqlite3 *db, report_group_t group,
     const char *category_label_expr =
         "CASE"
         "  WHEN c.id IS NULL THEN 'Uncategorized'"
-        "  WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "  WHEN pc.name IS NOT NULL THEN pc.name || ':' || c.name"
         "  ELSE c.name"
         " END";
 
@@ -1612,16 +1641,16 @@ int db_get_report_transactions(sqlite3 *db, report_group_t group,
     bool bind_label = false;
     if (group == REPORT_GROUP_CATEGORY) {
         if (strcmp(label, "Uncategorized") == 0) {
-            where_group = "t.category_id IS NULL";
+            where_group = "post.category_id IS NULL";
         } else {
             where_group = "(";
             bind_label = true;
         }
     } else if (group == REPORT_GROUP_PAYEE) {
         if (strcmp(label, "(No payee)") == 0) {
-            where_group = "(t.payee IS NULL OR trim(t.payee) = '')";
+            where_group = "(post.payee IS NULL OR trim(post.payee) = '')";
         } else {
-            where_group = "t.payee = ?";
+            where_group = "post.payee = ?";
             bind_label = true;
         }
     } else {
@@ -1631,39 +1660,81 @@ int db_get_report_transactions(sqlite3 *db, report_group_t group,
     char sql[4096];
     if (group == REPORT_GROUP_CATEGORY && bind_label) {
         snprintf(sql, sizeof(sql),
-                 "SELECT t.id, t.amount_cents, t.type,"
-                 "       COALESCE(t.reflection_date, t.date),"
-                 "       COALESCE(a.name, ''),"
-                 "       %s,"
-                 "       COALESCE(t.payee, ''),"
-                 "       COALESCE(t.description, '')"
-                 " FROM transactions t"
-                 " LEFT JOIN accounts a ON a.id = t.account_id"
-                 " LEFT JOIN categories c ON c.id = t.category_id"
-                 " LEFT JOIN categories p ON p.id = c.parent_id"
-                 " WHERE t.type IN ('EXPENSE', 'INCOME')"
-                 "   AND COALESCE(t.reflection_date, t.date) >= %s"
-                 "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+                 "WITH tx_flags AS ("
+                 "  SELECT t.id, EXISTS("
+                 "    SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+                 "  ) AS has_splits"
+                 "  FROM transactions t"
+                 "),"
+                 "postings AS ("
+                 "  SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+                 "         t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+                 "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+                 "  FROM transactions t"
+                 "  JOIN tx_flags f ON f.id = t.id"
+                 "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+                 "  UNION ALL"
+                 "  SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+                 "         ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+                 "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+                 "  FROM transactions t"
+                 "  JOIN tx_flags f ON f.id = t.id"
+                 "  JOIN transaction_splits ts ON ts.transaction_id = t.id"
+                 "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+                 ")"
+                 " SELECT post.txn_id, post.amount_cents, post.type,"
+                 "        post.effective_date,"
+                 "        COALESCE(a.name, ''),"
+                 "        %s,"
+                 "        post.payee,"
+                 "        post.description"
+                 " FROM postings post"
+                 " LEFT JOIN accounts a ON a.id = post.account_id"
+                 " LEFT JOIN categories c ON c.id = post.category_id"
+                 " LEFT JOIN categories pc ON pc.id = c.parent_id"
+                 " WHERE post.effective_date >= %s"
+                 "   AND post.effective_date <= date('now', 'localtime')"
                  "   AND (%s = ?)"
-                 " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+                 " ORDER BY post.effective_date DESC, post.txn_id DESC",
                  category_label_expr, start_expr, category_label_expr);
     } else {
         snprintf(sql, sizeof(sql),
-                 "SELECT t.id, t.amount_cents, t.type,"
-                 "       COALESCE(t.reflection_date, t.date),"
-                 "       COALESCE(a.name, ''),"
-                 "       %s,"
-                 "       COALESCE(t.payee, ''),"
-                 "       COALESCE(t.description, '')"
-                 " FROM transactions t"
-                 " LEFT JOIN accounts a ON a.id = t.account_id"
-                 " LEFT JOIN categories c ON c.id = t.category_id"
-                 " LEFT JOIN categories p ON p.id = c.parent_id"
-                 " WHERE t.type IN ('EXPENSE', 'INCOME')"
-                 "   AND COALESCE(t.reflection_date, t.date) >= %s"
-                 "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+                 "WITH tx_flags AS ("
+                 "  SELECT t.id, EXISTS("
+                 "    SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+                 "  ) AS has_splits"
+                 "  FROM transactions t"
+                 "),"
+                 "postings AS ("
+                 "  SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+                 "         t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+                 "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+                 "  FROM transactions t"
+                 "  JOIN tx_flags f ON f.id = t.id"
+                 "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+                 "  UNION ALL"
+                 "  SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+                 "         ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+                 "         COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+                 "  FROM transactions t"
+                 "  JOIN tx_flags f ON f.id = t.id"
+                 "  JOIN transaction_splits ts ON ts.transaction_id = t.id"
+                 "  WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+                 ")"
+                 " SELECT post.txn_id, post.amount_cents, post.type,"
+                 "        post.effective_date,"
+                 "        COALESCE(a.name, ''),"
+                 "        %s,"
+                 "        post.payee,"
+                 "        post.description"
+                 " FROM postings post"
+                 " LEFT JOIN accounts a ON a.id = post.account_id"
+                 " LEFT JOIN categories c ON c.id = post.category_id"
+                 " LEFT JOIN categories pc ON pc.id = c.parent_id"
+                 " WHERE post.effective_date >= %s"
+                 "   AND post.effective_date <= date('now', 'localtime')"
                  "   AND %s"
-                 " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+                 " ORDER BY post.effective_date DESC, post.txn_id DESC",
                  category_label_expr, start_expr, where_group);
     }
 
@@ -1777,25 +1848,46 @@ int db_get_budget_transactions_for_month(sqlite3 *db, int64_t category_id,
         "          AND c.id NOT IN (SELECT category_id FROM selected_descendants))"
         "      OR (fm.include_selected = 1"
         "          AND c.id IN (SELECT category_id FROM selected_descendants))"
+        " ),"
+        " tx_flags AS ("
+        "   SELECT t.id, EXISTS("
+        "     SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+        "   ) AS has_splits"
+        "   FROM transactions t"
+        " ),"
+        " postings AS ("
+        "   SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+        "          t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+        "          COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+        "   UNION ALL"
+        "   SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+        "          ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date,"
+        "          COALESCE(t.payee, '') AS payee, COALESCE(t.description, '') AS description"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   JOIN transaction_splits ts ON ts.transaction_id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
         " )"
-        " SELECT t.id, t.amount_cents, t.type,"
-        "        COALESCE(t.reflection_date, t.date),"
+        " SELECT p.txn_id, p.amount_cents, p.type,"
+        "        p.effective_date,"
         "        COALESCE(a.name, ''),"
         "        CASE"
-        "          WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "          WHEN pc.name IS NOT NULL THEN pc.name || ':' || c.name"
         "          ELSE COALESCE(c.name, '')"
         "        END,"
-        "        COALESCE(t.payee, ''),"
-        "        COALESCE(t.description, '')"
-        " FROM transactions t"
-        " JOIN descendants d ON d.category_id = t.category_id"
-        " JOIN allowed_categories ac ON ac.category_id = t.category_id"
-        " LEFT JOIN accounts a ON a.id = t.account_id"
-        " LEFT JOIN categories c ON c.id = t.category_id"
-        " LEFT JOIN categories p ON p.id = c.parent_id"
-        " WHERE substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
-        "   AND t.type IN ('EXPENSE', 'INCOME')"
-        " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+        "        p.payee,"
+        "        p.description"
+        " FROM postings p"
+        " JOIN descendants d ON d.category_id = p.category_id"
+        " JOIN allowed_categories ac ON ac.category_id = p.category_id"
+        " LEFT JOIN accounts a ON a.id = p.account_id"
+        " LEFT JOIN categories c ON c.id = p.category_id"
+        " LEFT JOIN categories pc ON pc.id = c.parent_id"
+        " WHERE substr(p.effective_date, 1, 7) = ?"
+        " ORDER BY p.effective_date DESC, p.txn_id DESC",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_budget_transactions_for_month prepare: %s\n",
@@ -2063,6 +2155,216 @@ int db_get_transfer_counterparty_account(sqlite3 *db, int64_t txn_id,
     fprintf(stderr, "db_get_transfer_counterparty_account step: %s\n",
             sqlite3_errmsg(db));
     return -1;
+}
+
+int db_get_transaction_splits(sqlite3 *db, int64_t transaction_id,
+                              txn_split_t **out) {
+    if (!out || transaction_id <= 0)
+        return -1;
+    *out = NULL;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT ts.id, ts.transaction_id, COALESCE(ts.category_id, 0),"
+        "       ts.amount_cents,"
+        "       CASE"
+        "         WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "         ELSE COALESCE(c.name, '')"
+        "       END"
+        " FROM transaction_splits ts"
+        " LEFT JOIN categories c ON c.id = ts.category_id"
+        " LEFT JOIN categories p ON p.id = c.parent_id"
+        " WHERE ts.transaction_id = ?"
+        " ORDER BY ts.id",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_transaction_splits prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, transaction_id);
+
+    int cap = 8;
+    int count = 0;
+    txn_split_t *rows = malloc((size_t)cap * sizeof(*rows));
+    if (!rows) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= cap) {
+            cap *= 2;
+            txn_split_t *tmp = realloc(rows, (size_t)cap * sizeof(*rows));
+            if (!tmp) {
+                free(rows);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            rows = tmp;
+        }
+
+        txn_split_t *row = &rows[count++];
+        memset(row, 0, sizeof(*row));
+        row->id = sqlite3_column_int64(stmt, 0);
+        row->transaction_id = sqlite3_column_int64(stmt, 1);
+        row->category_id = sqlite3_column_int64(stmt, 2);
+        row->amount_cents = sqlite3_column_int64(stmt, 3);
+        const char *category_name = (const char *)sqlite3_column_text(stmt, 4);
+        snprintf(row->category_name, sizeof(row->category_name), "%s",
+                 category_name ? category_name : "");
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_transaction_splits step: %s\n",
+                sqlite3_errmsg(db));
+        free(rows);
+        return -1;
+    }
+
+    if (count == 0) {
+        free(rows);
+        return 0;
+    }
+    *out = rows;
+    return count;
+}
+
+static int replace_transaction_splits_in_tx(sqlite3 *db, int64_t transaction_id,
+                                            const txn_split_t *splits,
+                                            int split_count) {
+    if (transaction_id <= 0 || !splits || split_count <= 0)
+        return -4;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT amount_cents, type FROM transactions WHERE id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "replace_transaction_splits_in_tx prepare txn: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, transaction_id);
+    rc = sqlite3_step(stmt);
+    int64_t txn_amount_cents = 0;
+    transaction_type_t txn_type = TRANSACTION_EXPENSE;
+    if (rc == SQLITE_ROW) {
+        txn_amount_cents = sqlite3_column_int64(stmt, 0);
+        const char *type_name = (const char *)sqlite3_column_text(stmt, 1);
+        txn_type = transaction_type_from_str(type_name);
+    } else if (rc == SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return -2;
+    } else {
+        fprintf(stderr, "replace_transaction_splits_in_tx step txn: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    if (!transaction_type_is_flow(txn_type))
+        return -3;
+
+    int64_t split_total = 0;
+    for (int i = 0; i < split_count; i++) {
+        if (splits[i].amount_cents <= 0)
+            return -4;
+        if (splits[i].category_id < 0)
+            return -4;
+        if (split_total > INT64_MAX - splits[i].amount_cents)
+            return -4;
+        split_total += splits[i].amount_cents;
+    }
+    if (split_total != txn_amount_cents)
+        return -4;
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "DELETE FROM transaction_splits WHERE transaction_id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr,
+                "replace_transaction_splits_in_tx prepare clear: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, transaction_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "replace_transaction_splits_in_tx step clear: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO transaction_splits"
+        " (transaction_id, category_id, amount_cents)"
+        " VALUES (?, ?, ?)",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr,
+                "replace_transaction_splits_in_tx prepare insert: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    for (int i = 0; i < split_count; i++) {
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+        sqlite3_bind_int64(stmt, 1, transaction_id);
+        if (splits[i].category_id > 0)
+            sqlite3_bind_int64(stmt, 2, splits[i].category_id);
+        else
+            sqlite3_bind_null(stmt, 2);
+        sqlite3_bind_int64(stmt, 3, splits[i].amount_cents);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr,
+                    "replace_transaction_splits_in_tx step insert: %s\n",
+                    sqlite3_errmsg(db));
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int db_replace_transaction_splits(sqlite3 *db, int64_t transaction_id,
+                                  const txn_split_t *splits, int split_count) {
+    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_replace_transaction_splits begin: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int op_rc = replace_transaction_splits_in_tx(db, transaction_id, splits,
+                                                 split_count);
+    if (op_rc != 0) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return op_rc;
+    }
+
+    rc = sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_replace_transaction_splits commit: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+    return 0;
 }
 
 int db_update_transfer(sqlite3 *db, const transaction_t *txn,
@@ -2389,7 +2691,7 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db,
-        "SELECT transfer_id, account_id FROM transactions WHERE id = ?",
+        "SELECT transfer_id, account_id, amount_cents, type FROM transactions WHERE id = ?",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_update_transaction prepare: %s\n", sqlite3_errmsg(db));
@@ -2400,11 +2702,16 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
 
     int64_t old_transfer_id = 0;
     int64_t old_account_id = 0;
+    int64_t old_amount_cents = 0;
+    transaction_type_t old_type = TRANSACTION_EXPENSE;
     rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         if (sqlite3_column_type(stmt, 0) != SQLITE_NULL)
             old_transfer_id = sqlite3_column_int64(stmt, 0);
         old_account_id = sqlite3_column_int64(stmt, 1);
+        old_amount_cents = sqlite3_column_int64(stmt, 2);
+        const char *old_type_name = (const char *)sqlite3_column_text(stmt, 3);
+        old_type = transaction_type_from_str(old_type_name);
     } else if (rc == SQLITE_DONE) {
         sqlite3_finalize(stmt);
         return -2;
@@ -2427,6 +2734,38 @@ int db_update_transaction(sqlite3 *db, const transaction_t *txn) {
     }
     if (normalized.type != TRANSACTION_TRANSFER) {
         normalized.transfer_id = 0;
+    }
+
+    int split_count = 0;
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COUNT(*) FROM transaction_splits WHERE transaction_id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_update_transaction prepare split count: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+    sqlite3_bind_int64(stmt, 1, normalized.id);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW)
+        split_count = sqlite3_column_int(stmt, 0);
+    else {
+        fprintf(stderr, "db_update_transaction step split count: %s\n",
+                sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    if (split_count > 0) {
+        if (!transaction_type_is_flow(normalized.type))
+            return -3;
+        if (normalized.amount_cents != old_amount_cents)
+            return -4;
+        if (!transaction_type_is_flow(old_type))
+            return -3;
     }
 
     const char *type_str = transaction_type_to_str(normalized.type);
@@ -2843,9 +3182,7 @@ int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
     if (normalize_budget_month(month_ym, norm_month) < 0)
         return -1;
 
-    sqlite3_stmt *stmt = NULL;
-    int rc = sqlite3_prepare_v2(
-        db,
+    const char *sql_part1 =
         "WITH RECURSIVE"
         " parents AS ("
         "   SELECT id, name FROM categories WHERE parent_id IS NULL"
@@ -2885,20 +3222,41 @@ int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
         "   JOIN allowed_categories ac ON ac.category_id = d.category_id"
         "   GROUP BY d.parent_id"
         " ),"
+        " tx_flags AS ("
+        "   SELECT t.id, EXISTS("
+        "     SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+        "   ) AS has_splits"
+        "   FROM transactions t"
+        " ),"
+        " postings AS ("
+        "   SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+        "          t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+        "   UNION ALL"
+        "   SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+        "          ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   JOIN transaction_splits ts ON ts.transaction_id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+        " ),";
+
+    const char *sql_part2 =
         " monthly_stats AS ("
         "   SELECT d.parent_id,"
         "          COALESCE(SUM(CASE"
-        "            WHEN t.type = 'EXPENSE' THEN t.amount_cents"
-        "            WHEN t.type = 'INCOME' THEN -t.amount_cents"
+        "            WHEN post.type = 'EXPENSE' THEN post.amount_cents"
+        "            WHEN post.type = 'INCOME' THEN -post.amount_cents"
         "            ELSE 0"
         "          END), 0) AS net_spent_cents,"
-        "          COUNT(t.id) AS txn_count"
+        "          COUNT(post.txn_id) AS txn_count"
         "   FROM descendants d"
-        "   LEFT JOIN transactions t"
-        "     ON t.category_id = d.category_id"
-        "    AND t.category_id IN (SELECT category_id FROM allowed_categories)"
-        "    AND substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
-        "    AND t.type IN ('EXPENSE', 'INCOME')"
+        "   LEFT JOIN postings post"
+        "     ON post.category_id = d.category_id"
+        "    AND post.category_id IN (SELECT category_id FROM allowed_categories)"
+        "    AND substr(post.effective_date, 1, 7) = ?"
         "   GROUP BY d.parent_id"
         " ),"
         " flags AS ("
@@ -2972,8 +3330,17 @@ int db_get_budget_rows_for_month(sqlite3 *db, const char *month_ym,
         "   AND (f.has_rule = 1"
         "        OR f.has_rollup_rule = 1"
         "        OR COALESCE(ms.txn_count, 0) > 0)"
-        " ORDER BY p.name",
-        -1, &stmt, NULL);
+        " ORDER BY p.name";
+
+    char sql[8192];
+    int n = snprintf(sql, sizeof(sql), "%s%s", sql_part1, sql_part2);
+    if (n < 0 || (size_t)n >= sizeof(sql)) {
+        fprintf(stderr, "db_get_budget_rows_for_month sql overflow\n");
+        return -1;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_budget_rows_for_month prepare: %s\n",
                 sqlite3_errmsg(db));
@@ -3054,9 +3421,7 @@ int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
     if (normalize_budget_month(month_ym, norm_month) < 0)
         return -1;
 
-    sqlite3_stmt *stmt = NULL;
-    int rc = sqlite3_prepare_v2(
-        db,
+    const char *sql_part1 =
         "WITH RECURSIVE"
         " roots AS ("
         "   SELECT id, name FROM categories WHERE parent_id = ?"
@@ -3096,20 +3461,41 @@ int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
         "   JOIN allowed_categories ac ON ac.category_id = d.category_id"
         "   GROUP BY d.root_id"
         " ),"
+        " tx_flags AS ("
+        "   SELECT t.id, EXISTS("
+        "     SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+        "   ) AS has_splits"
+        "   FROM transactions t"
+        " ),"
+        " postings AS ("
+        "   SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+        "          t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+        "   UNION ALL"
+        "   SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+        "          ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   JOIN transaction_splits ts ON ts.transaction_id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+        " ),";
+
+    const char *sql_part2 =
         " monthly_stats AS ("
         "   SELECT d.root_id,"
         "          COALESCE(SUM(CASE"
-        "            WHEN t.type = 'EXPENSE' THEN t.amount_cents"
-        "            WHEN t.type = 'INCOME' THEN -t.amount_cents"
+        "            WHEN post.type = 'EXPENSE' THEN post.amount_cents"
+        "            WHEN post.type = 'INCOME' THEN -post.amount_cents"
         "            ELSE 0"
         "          END), 0) AS net_spent_cents,"
-        "          COUNT(t.id) AS txn_count"
+        "          COUNT(post.txn_id) AS txn_count"
         "   FROM descendants d"
-        "   LEFT JOIN transactions t"
-        "     ON t.category_id = d.category_id"
-        "    AND t.category_id IN (SELECT category_id FROM allowed_categories)"
-        "    AND substr(COALESCE(t.reflection_date, t.date), 1, 7) = ?"
-        "    AND t.type IN ('EXPENSE', 'INCOME')"
+        "   LEFT JOIN postings post"
+        "     ON post.category_id = d.category_id"
+        "    AND post.category_id IN (SELECT category_id FROM allowed_categories)"
+        "    AND substr(post.effective_date, 1, 7) = ?"
         "   GROUP BY d.root_id"
         " )"
         " SELECT r.id, r.name,"
@@ -3169,7 +3555,9 @@ int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
         " FROM roots r"
         " JOIN allowed_descendant_counts adc ON adc.root_id = r.id"
         " LEFT JOIN monthly_stats ms ON ms.root_id = r.id"
-        " WHERE adc.allowed_count > 0"
+        " WHERE adc.allowed_count > 0";
+
+    const char *sql_part3 =
         "   AND (COALESCE(ms.txn_count, 0) > 0"
         "        OR EXISTS("
         "          SELECT 1"
@@ -3184,8 +3572,18 @@ int db_get_budget_child_rows_for_month(sqlite3 *db, int64_t parent_category_id,
         "              WHERE month <= ?"
         "            )"
         "        ))"
-        " ORDER BY r.name",
-        -1, &stmt, NULL);
+        " ORDER BY r.name";
+
+    char sql[10000];
+    int n = snprintf(sql, sizeof(sql), "%s%s%s", sql_part1, sql_part2,
+                     sql_part3);
+    if (n < 0 || (size_t)n >= sizeof(sql)) {
+        fprintf(stderr, "db_get_budget_child_rows_for_month sql overflow\n");
+        return -1;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_get_budget_child_rows_for_month prepare: %s\n",
                 sqlite3_errmsg(db));
@@ -3303,6 +3701,26 @@ int db_get_budget_running_progress_for_year_before_month(
         "      OR (fm.include_selected = 1"
         "          AND c.id IN (SELECT category_id FROM selected_descendants))"
         " ),"
+        " tx_flags AS ("
+        "   SELECT t.id, EXISTS("
+        "     SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id"
+        "   ) AS has_splits"
+        "   FROM transactions t"
+        " ),"
+        " postings AS ("
+        "   SELECT t.id AS txn_id, t.type, t.account_id, t.category_id,"
+        "          t.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 0"
+        "   UNION ALL"
+        "   SELECT t.id AS txn_id, t.type, t.account_id, ts.category_id,"
+        "          ts.amount_cents, COALESCE(t.reflection_date, t.date) AS effective_date"
+        "   FROM transactions t"
+        "   JOIN tx_flags f ON f.id = t.id"
+        "   JOIN transaction_splits ts ON ts.transaction_id = t.id"
+        "   WHERE t.type IN ('EXPENSE', 'INCOME') AND f.has_splits = 1"
+        " ),"
         " view_ctx(view_month, view_month_start, year_start) AS ("
         "   SELECT ?2,"
         "          date(?2 || '-01'),"
@@ -3342,17 +3760,16 @@ int db_get_budget_running_progress_for_year_before_month(
         " ),"
         " actual_progress AS ("
         "   SELECT COALESCE(SUM(CASE"
-        "     WHEN t.type = 'EXPENSE' THEN t.amount_cents"
-        "     WHEN t.type = 'INCOME' THEN -t.amount_cents"
+        "     WHEN post.type = 'EXPENSE' THEN post.amount_cents"
+        "     WHEN post.type = 'INCOME' THEN -post.amount_cents"
         "     ELSE 0"
         "   END), 0) AS actual_cents"
-        "   FROM transactions t"
-        "   JOIN descendants d ON d.category_id = t.category_id"
-        "   JOIN allowed_categories ac ON ac.category_id = t.category_id"
+        "   FROM postings post"
+        "   JOIN descendants d ON d.category_id = post.category_id"
+        "   JOIN allowed_categories ac ON ac.category_id = post.category_id"
         "   JOIN view_ctx vc"
-        "   WHERE t.type IN ('EXPENSE', 'INCOME')"
-        "     AND COALESCE(t.reflection_date, t.date) >= vc.year_start"
-        "     AND COALESCE(t.reflection_date, t.date) < vc.view_month_start"
+        "   WHERE post.effective_date >= vc.year_start"
+        "     AND post.effective_date < vc.view_month_start"
         " )"
         " SELECT ap.actual_cents, ep.expected_cents"
         " FROM actual_progress ap"
@@ -3592,7 +4009,12 @@ int db_get_loan_profiles(sqlite3 *db, loan_profile_t **out) {
         db,
         "SELECT lp.id, lp.account_id, a.name, lp.loan_kind, lp.start_date,"
         "       lp.interest_rate_bps, lp.initial_principal_cents,"
-        "       lp.scheduled_payment_cents, lp.payment_day"
+        "       lp.scheduled_payment_cents, lp.payment_day,"
+        "       lp.split_principal_cents, lp.split_interest_cents,"
+        "       lp.split_escrow_cents,"
+        "       COALESCE(lp.split_principal_category_id, 0),"
+        "       COALESCE(lp.split_interest_category_id, 0),"
+        "       COALESCE(lp.split_escrow_category_id, 0)"
         " FROM loan_profiles lp"
         " JOIN accounts a ON a.id = lp.account_id"
         " ORDER BY a.name COLLATE NOCASE, lp.id",
@@ -3638,6 +4060,12 @@ int db_get_loan_profiles(sqlite3 *db, loan_profile_t **out) {
         row->initial_principal_cents = sqlite3_column_int64(stmt, 6);
         row->scheduled_payment_cents = sqlite3_column_int64(stmt, 7);
         row->payment_day = sqlite3_column_int(stmt, 8);
+        row->split_principal_cents = sqlite3_column_int64(stmt, 9);
+        row->split_interest_cents = sqlite3_column_int64(stmt, 10);
+        row->split_escrow_cents = sqlite3_column_int64(stmt, 11);
+        row->split_principal_category_id = sqlite3_column_int64(stmt, 12);
+        row->split_interest_category_id = sqlite3_column_int64(stmt, 13);
+        row->split_escrow_category_id = sqlite3_column_int64(stmt, 14);
         if (row->payment_day < 1)
             row->payment_day = 1;
         if (row->payment_day > 28)
@@ -3670,7 +4098,12 @@ int db_get_loan_profile_by_account(sqlite3 *db, int64_t account_id,
         db,
         "SELECT lp.id, lp.account_id, a.name, lp.loan_kind, lp.start_date,"
         "       lp.interest_rate_bps, lp.initial_principal_cents,"
-        "       lp.scheduled_payment_cents, lp.payment_day"
+        "       lp.scheduled_payment_cents, lp.payment_day,"
+        "       lp.split_principal_cents, lp.split_interest_cents,"
+        "       lp.split_escrow_cents,"
+        "       COALESCE(lp.split_principal_category_id, 0),"
+        "       COALESCE(lp.split_interest_category_id, 0),"
+        "       COALESCE(lp.split_escrow_category_id, 0)"
         " FROM loan_profiles lp"
         " JOIN accounts a ON a.id = lp.account_id"
         " WHERE lp.account_id = ?"
@@ -3699,6 +4132,12 @@ int db_get_loan_profile_by_account(sqlite3 *db, int64_t account_id,
         out->initial_principal_cents = sqlite3_column_int64(stmt, 6);
         out->scheduled_payment_cents = sqlite3_column_int64(stmt, 7);
         out->payment_day = sqlite3_column_int(stmt, 8);
+        out->split_principal_cents = sqlite3_column_int64(stmt, 9);
+        out->split_interest_cents = sqlite3_column_int64(stmt, 10);
+        out->split_escrow_cents = sqlite3_column_int64(stmt, 11);
+        out->split_principal_category_id = sqlite3_column_int64(stmt, 12);
+        out->split_interest_category_id = sqlite3_column_int64(stmt, 13);
+        out->split_escrow_category_id = sqlite3_column_int64(stmt, 14);
         if (out->payment_day < 1)
             out->payment_day = 1;
         if (out->payment_day > 28)
@@ -3722,6 +4161,20 @@ int db_upsert_loan_profile(sqlite3 *db, const loan_profile_t *profile) {
     if (profile->initial_principal_cents <= 0 ||
         profile->scheduled_payment_cents <= 0 || profile->interest_rate_bps < 0)
         return -1;
+    if (profile->split_escrow_cents < 0)
+        return -1;
+    if (profile->split_escrow_cents >= profile->scheduled_payment_cents)
+        return -1;
+
+    long double monthly_interest =
+        ((long double)profile->initial_principal_cents *
+         (long double)profile->interest_rate_bps) /
+        120000.0L;
+    int64_t first_interest_cents = (int64_t)(monthly_interest + 0.5L);
+    int64_t amortized_payment_cents =
+        profile->scheduled_payment_cents - profile->split_escrow_cents;
+    if (amortized_payment_cents <= first_interest_cents)
+        return -1;
 
     char norm_start_date[11];
     if (normalize_txn_date(profile->start_date, norm_start_date) < 0)
@@ -3738,8 +4191,10 @@ int db_upsert_loan_profile(sqlite3 *db, const loan_profile_t *profile) {
         db,
         "INSERT INTO loan_profiles (account_id, loan_kind, start_date,"
         " interest_rate_bps, initial_principal_cents, scheduled_payment_cents,"
-        " payment_day, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+        " payment_day, split_principal_cents, split_interest_cents,"
+        " split_escrow_cents, split_principal_category_id,"
+        " split_interest_category_id, split_escrow_category_id, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
         " ON CONFLICT(account_id) DO UPDATE SET"
         "   loan_kind = excluded.loan_kind,"
         "   start_date = excluded.start_date,"
@@ -3747,6 +4202,12 @@ int db_upsert_loan_profile(sqlite3 *db, const loan_profile_t *profile) {
         "   initial_principal_cents = excluded.initial_principal_cents,"
         "   scheduled_payment_cents = excluded.scheduled_payment_cents,"
         "   payment_day = excluded.payment_day,"
+        "   split_principal_cents = excluded.split_principal_cents,"
+        "   split_interest_cents = excluded.split_interest_cents,"
+        "   split_escrow_cents = excluded.split_escrow_cents,"
+        "   split_principal_category_id = excluded.split_principal_category_id,"
+        "   split_interest_category_id = excluded.split_interest_category_id,"
+        "   split_escrow_category_id = excluded.split_escrow_category_id,"
         "   updated_at = CURRENT_TIMESTAMP",
         -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
@@ -3762,6 +4223,21 @@ int db_upsert_loan_profile(sqlite3 *db, const loan_profile_t *profile) {
     sqlite3_bind_int64(stmt, 5, profile->initial_principal_cents);
     sqlite3_bind_int64(stmt, 6, profile->scheduled_payment_cents);
     sqlite3_bind_int(stmt, 7, payment_day);
+    sqlite3_bind_int64(stmt, 8, 0);
+    sqlite3_bind_int64(stmt, 9, 0);
+    sqlite3_bind_int64(stmt, 10, profile->split_escrow_cents);
+    if (profile->split_principal_category_id > 0)
+        sqlite3_bind_int64(stmt, 11, profile->split_principal_category_id);
+    else
+        sqlite3_bind_null(stmt, 11);
+    if (profile->split_interest_category_id > 0)
+        sqlite3_bind_int64(stmt, 12, profile->split_interest_category_id);
+    else
+        sqlite3_bind_null(stmt, 12);
+    if (profile->split_escrow_category_id > 0)
+        sqlite3_bind_int64(stmt, 13, profile->split_escrow_category_id);
+    else
+        sqlite3_bind_null(stmt, 13);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -3859,6 +4335,170 @@ int db_get_next_loan_payment_date(sqlite3 *db, int64_t account_id,
     return 0;
 }
 
+static int loan_get_principal_paid_to_date(sqlite3 *db, int64_t account_id,
+                                           int64_t principal_category_id,
+                                           int64_t *out_paid_cents) {
+    if (!out_paid_cents || account_id <= 0)
+        return -1;
+    *out_paid_cents = 0;
+
+    if (principal_category_id <= 0)
+        return 0;
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(SUM(ts.amount_cents), 0)"
+        " FROM transaction_splits ts"
+        " JOIN transactions t ON t.id = ts.transaction_id"
+        " WHERE t.account_id = ?"
+        "   AND t.type = 'EXPENSE'"
+        "   AND ts.category_id = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "loan_get_principal_paid_to_date prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, account_id);
+    sqlite3_bind_int64(stmt, 2, principal_category_id);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *out_paid_cents = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+    fprintf(stderr, "loan_get_principal_paid_to_date step: %s\n",
+            sqlite3_errmsg(db));
+    return -1;
+}
+
+int db_ensure_loan_split_categories(sqlite3 *db, loan_kind_t loan_kind,
+                                    int64_t *out_principal_category_id,
+                                    int64_t *out_interest_category_id,
+                                    int64_t *out_escrow_category_id) {
+    if (!out_principal_category_id || !out_interest_category_id ||
+        !out_escrow_category_id)
+        return -1;
+    *out_principal_category_id = 0;
+    *out_interest_category_id = 0;
+    *out_escrow_category_id = 0;
+
+    const char *parent_name =
+        (loan_kind == LOAN_KIND_MORTGAGE) ? "Mortgage" : "Auto Loan";
+    int64_t parent_id =
+        db_get_or_create_category(db, CATEGORY_EXPENSE, parent_name, 0);
+    if (parent_id <= 0)
+        return -1;
+
+    int64_t principal_id =
+        db_get_or_create_category(db, CATEGORY_EXPENSE, "Principal", parent_id);
+    if (principal_id <= 0)
+        return -1;
+    int64_t interest_id =
+        db_get_or_create_category(db, CATEGORY_EXPENSE, "Interest", parent_id);
+    if (interest_id <= 0)
+        return -1;
+    int64_t escrow_id =
+        db_get_or_create_category(db, CATEGORY_EXPENSE, "Escrow", parent_id);
+    if (escrow_id <= 0)
+        return -1;
+
+    *out_principal_category_id = principal_id;
+    *out_interest_category_id = interest_id;
+    *out_escrow_category_id = escrow_id;
+    return 0;
+}
+
+int db_get_next_loan_payment_breakdown(sqlite3 *db, int64_t account_id,
+                                       int64_t *out_principal_cents,
+                                       int64_t *out_interest_cents,
+                                       int64_t *out_escrow_cents) {
+    if (!out_principal_cents || !out_interest_cents || !out_escrow_cents)
+        return -1;
+    *out_principal_cents = 0;
+    *out_interest_cents = 0;
+    *out_escrow_cents = 0;
+
+    loan_profile_t profile = {0};
+    int rc = db_get_loan_profile_by_account(db, account_id, &profile);
+    if (rc != 0)
+        return (rc == -2) ? -2 : -1;
+
+    int64_t principal_paid_cents = 0;
+    if (loan_get_principal_paid_to_date(db, account_id,
+                                        profile.split_principal_category_id,
+                                        &principal_paid_cents) < 0)
+        return -1;
+
+    int64_t remaining_principal_cents =
+        profile.initial_principal_cents - principal_paid_cents;
+    if (remaining_principal_cents <= 0)
+        return -1;
+
+    int64_t escrow_cents = profile.split_escrow_cents;
+    if (escrow_cents < 0)
+        escrow_cents = 0;
+    if (escrow_cents >= profile.scheduled_payment_cents)
+        return -1;
+
+    int64_t amortized_payment_cents = profile.scheduled_payment_cents - escrow_cents;
+    if (amortized_payment_cents <= 0)
+        return -1;
+
+    long double interest_ld =
+        ((long double)remaining_principal_cents *
+         (long double)profile.interest_rate_bps) /
+        120000.0L;
+    if (interest_ld < 0.0L)
+        interest_ld = 0.0L;
+
+    int64_t interest_cents = (int64_t)(interest_ld + 0.5L);
+    int64_t principal_cents = amortized_payment_cents - interest_cents;
+    if (principal_cents <= 0)
+        return -1;
+
+    if (principal_cents > remaining_principal_cents) {
+        principal_cents = remaining_principal_cents;
+        interest_cents = amortized_payment_cents - principal_cents;
+        if (interest_cents < 0)
+            interest_cents = 0;
+    }
+
+    *out_principal_cents = principal_cents;
+    *out_interest_cents = interest_cents;
+    *out_escrow_cents = escrow_cents;
+
+    return 0;
+}
+
+int db_get_loan_remaining_principal_cents(sqlite3 *db, int64_t account_id,
+                                          int64_t *out_remaining_cents) {
+    if (!out_remaining_cents)
+        return -1;
+    *out_remaining_cents = 0;
+
+    loan_profile_t profile = {0};
+    int rc = db_get_loan_profile_by_account(db, account_id, &profile);
+    if (rc != 0)
+        return (rc == -2) ? -2 : -1;
+
+    int64_t principal_paid_cents = 0;
+    if (loan_get_principal_paid_to_date(db, account_id,
+                                        profile.split_principal_category_id,
+                                        &principal_paid_cents) < 0)
+        return -1;
+
+    int64_t remaining = profile.initial_principal_cents - principal_paid_cents;
+    if (remaining < 0)
+        remaining = 0;
+    *out_remaining_cents = remaining;
+    return 0;
+}
+
 int64_t db_enact_loan_payment(sqlite3 *db, int64_t account_id) {
     if (account_id <= 0)
         return -1;
@@ -3873,6 +4513,21 @@ int64_t db_enact_loan_payment(sqlite3 *db, int64_t account_id) {
     if (rc != 0)
         return (rc == -2) ? -2 : -1;
 
+    int64_t principal_cents = 0;
+    int64_t interest_cents = 0;
+    int64_t escrow_cents = 0;
+    if (db_get_next_loan_payment_breakdown(db, account_id, &principal_cents,
+                                           &interest_cents,
+                                           &escrow_cents) != 0)
+        return -1;
+
+    int64_t principal_cat = profile.split_principal_category_id;
+    int64_t interest_cat = profile.split_interest_category_id;
+    int64_t escrow_cat = profile.split_escrow_category_id;
+    if (db_ensure_loan_split_categories(db, profile.loan_kind, &principal_cat,
+                                        &interest_cat, &escrow_cat) < 0)
+        return -1;
+
     transaction_t txn = {0};
     txn.amount_cents = profile.scheduled_payment_cents;
     txn.type = TRANSACTION_EXPENSE;
@@ -3884,5 +4539,63 @@ int64_t db_enact_loan_payment(sqlite3 *db, int64_t account_id) {
     snprintf(txn.description, sizeof(txn.description), "Scheduled %s payment",
              profile.loan_kind == LOAN_KIND_MORTGAGE ? "mortgage" : "car loan");
 
-    return db_insert_transaction(db, &txn);
+    int rc_tx = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+    if (rc_tx != SQLITE_OK) {
+        fprintf(stderr, "db_enact_loan_payment begin: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int64_t txn_id = db_insert_transaction(db, &txn);
+    if (txn_id <= 0) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+
+    txn_split_t splits[3];
+    int split_count = 0;
+    if (principal_cents > 0) {
+        memset(&splits[split_count], 0, sizeof(splits[split_count]));
+        splits[split_count].category_id = principal_cat;
+        splits[split_count].amount_cents = principal_cents;
+        split_count++;
+    }
+    if (interest_cents > 0) {
+        memset(&splits[split_count], 0, sizeof(splits[split_count]));
+        splits[split_count].category_id = interest_cat;
+        splits[split_count].amount_cents = interest_cents;
+        split_count++;
+    }
+    if (escrow_cents > 0) {
+        memset(&splits[split_count], 0, sizeof(splits[split_count]));
+        splits[split_count].category_id = escrow_cat;
+        splits[split_count].amount_cents = escrow_cents;
+        split_count++;
+    }
+
+    int split_rc = replace_transaction_splits_in_tx(db, txn_id, splits, split_count);
+    if (split_rc != 0) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+
+    if ((profile.split_principal_category_id != principal_cat) ||
+        (profile.split_interest_category_id != interest_cat) ||
+        (profile.split_escrow_category_id != escrow_cat)) {
+        profile.split_principal_category_id = principal_cat;
+        profile.split_interest_category_id = interest_cat;
+        profile.split_escrow_category_id = escrow_cat;
+        if (db_upsert_loan_profile(db, &profile) != 0) {
+            sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
+    }
+
+    rc_tx = sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    if (rc_tx != SQLITE_OK) {
+        fprintf(stderr, "db_enact_loan_payment commit: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
+
+    return txn_id;
 }

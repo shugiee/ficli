@@ -124,8 +124,10 @@ static const help_row_t help_rows[] = {
     {"", ""},
     {NULL, "Loans"},
     {"n", "Add loan profile"},
-    {"e", "Edit selected profile"},
-    {"d", "Delete selected profile"},
+    {"e", "Edit selected transaction"},
+    {"E", "Edit selected loan profile"},
+    {"d", "Delete selected transaction"},
+    {"D", "Delete selected loan profile"},
     {"Enter", "Enact next payment (phantom row)"},
     {"1-9", "Switch loan profile"},
 
