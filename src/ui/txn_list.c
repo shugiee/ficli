@@ -28,7 +28,7 @@
 // row 2: spacer
 // row 3: spacer
 // row 4: summary line
-// row 5: spacer
+// row 5: selected summary line (when multi-select active)
 // row 6: spacer
 // row 7+: optional chart block
 // filter, headers, rule, and data start rows are computed per-window
@@ -100,6 +100,14 @@ typedef struct {
     bool description;
     bool transfer_to_account;
 } txn_edit_changes_t;
+
+typedef struct {
+    int selected_count;
+    int64_t sum_cents;
+    int64_t income_cents;
+    int64_t expense_cents;
+    int64_t net_cents;
+} txn_selected_totals_t;
 
 static bool txn_list_is_selected(const txn_list_state_t *ls, int64_t id) {
     if (!ls || ls->selected_count <= 0 || !ls->selected_ids)
@@ -643,6 +651,153 @@ static void format_signed_cents(int64_t cents, bool show_plus, char *buf,
         snprintf(buf, buflen, "+%s.%02ld", formatted, (long)frac);
     else
         snprintf(buf, buflen, "%s.%02ld", formatted, (long)frac);
+}
+
+static const txn_row_t *txn_list_find_transaction_by_id(const txn_list_state_t *ls,
+                                                        int64_t id) {
+    if (!ls || id <= 0 || !ls->transactions)
+        return NULL;
+    for (int i = 0; i < ls->txn_count; i++) {
+        if (ls->transactions[i].id == id)
+            return &ls->transactions[i];
+    }
+    return NULL;
+}
+
+static txn_selected_totals_t txn_list_selected_totals(const txn_list_state_t *ls) {
+    txn_selected_totals_t totals = {0};
+    if (!ls || ls->selected_count <= 0 || !ls->selected_ids)
+        return totals;
+
+    totals.selected_count = ls->selected_count;
+    for (int i = 0; i < ls->selected_count; i++) {
+        const txn_row_t *t =
+            txn_list_find_transaction_by_id(ls, ls->selected_ids[i]);
+        if (!t || t->type == TRANSACTION_TRANSFER)
+            continue;
+
+        if (t->type == TRANSACTION_INCOME) {
+            totals.income_cents += t->amount_cents;
+            totals.sum_cents += t->amount_cents;
+        } else {
+            totals.expense_cents += t->amount_cents;
+            totals.sum_cents -= t->amount_cents;
+        }
+    }
+
+    totals.net_cents = totals.income_cents - totals.expense_cents;
+    return totals;
+}
+
+static void draw_selected_summary_line(const txn_list_state_t *ls, WINDOW *win,
+                                       int w, int row) {
+    if (!ls || !win || ls->selected_count <= 0 || w <= 4)
+        return;
+
+    txn_selected_totals_t totals = txn_list_selected_totals(ls);
+
+    char sum_buf[24];
+    char income_buf[24];
+    char expense_buf[24];
+    char net_buf[24];
+    format_signed_cents(totals.sum_cents, true, sum_buf, sizeof(sum_buf));
+    format_signed_cents(totals.income_cents, false, income_buf, sizeof(income_buf));
+    format_signed_cents(-totals.expense_cents, false, expense_buf,
+                        sizeof(expense_buf));
+    format_signed_cents(totals.net_cents, true, net_buf, sizeof(net_buf));
+
+    char full_text[256];
+    char compact_text[128];
+    char net_only_text[96];
+    int full_len = snprintf(full_text, sizeof(full_text),
+                            "Selected %d   Sum %s   Income %s   Expense %s   Net %s",
+                            totals.selected_count, sum_buf, income_buf,
+                            expense_buf, net_buf);
+    int compact_len = snprintf(compact_text, sizeof(compact_text),
+                               "Selected %d   Sum %s   Net %s",
+                               totals.selected_count, sum_buf, net_buf);
+    int net_only_len = snprintf(net_only_text, sizeof(net_only_text),
+                                "Selected %d   Net %s", totals.selected_count,
+                                net_buf);
+
+    int mode = 3; // 3 full, 2 compact, 1 net-only, 0 count-only
+    int chosen_len = full_len;
+    if (full_len > w - 4) {
+        mode = 2;
+        chosen_len = compact_len;
+    }
+    if (chosen_len > w - 4) {
+        mode = 1;
+        chosen_len = net_only_len;
+    }
+    if (chosen_len > w - 4) {
+        mode = 0;
+        chosen_len = snprintf(net_only_text, sizeof(net_only_text), "Selected %d",
+                              totals.selected_count);
+    }
+    if (chosen_len < 0)
+        return;
+
+    int col = (w - chosen_len) / 2;
+    if (col < 2)
+        col = 2;
+
+    int cur = col;
+    wattron(win, A_BOLD);
+    mvwprintw(win, row, cur, "Selected %d", totals.selected_count);
+    wattroff(win, A_BOLD);
+    cur += snprintf(NULL, 0, "Selected %d", totals.selected_count);
+
+    if (mode >= 2) {
+        mvwprintw(win, row, cur, "   ");
+        cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cur, "Sum ");
+        wattroff(win, A_BOLD);
+        cur += 4;
+        int sum_color = (totals.sum_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
+        wattron(win, COLOR_PAIR(sum_color));
+        mvwprintw(win, row, cur, "%s", sum_buf);
+        wattroff(win, COLOR_PAIR(sum_color));
+        cur += (int)strlen(sum_buf);
+    }
+
+    if (mode == 3) {
+        mvwprintw(win, row, cur, "   ");
+        cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cur, "Income ");
+        wattroff(win, A_BOLD);
+        cur += 7;
+        wattron(win, COLOR_PAIR(COLOR_INCOME));
+        mvwprintw(win, row, cur, "%s", income_buf);
+        wattroff(win, COLOR_PAIR(COLOR_INCOME));
+        cur += (int)strlen(income_buf);
+
+        mvwprintw(win, row, cur, "   ");
+        cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cur, "Expense ");
+        wattroff(win, A_BOLD);
+        cur += 8;
+        wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+        mvwprintw(win, row, cur, "%s", expense_buf);
+        wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
+        cur += (int)strlen(expense_buf);
+    }
+
+    if (mode >= 1) {
+        mvwprintw(win, row, cur, "   ");
+        cur += 3;
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cur, "Net ");
+        wattroff(win, A_BOLD);
+        cur += 4;
+        int net_color = (totals.net_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
+        wattron(win, COLOR_PAIR(net_color));
+        mvwprintw(win, row, cur, "%s", net_buf);
+        wattroff(win, COLOR_PAIR(net_color));
+    }
 }
 
 static void format_axis_date_short(const char *iso, char *buf, int buflen) {
@@ -1226,6 +1381,8 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_expense_buf);
         wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
     }
+
+    draw_selected_summary_line(ls, win, w, SUMMARY_ROW + 1);
 
     if (layout.show_chart) {
         draw_balance_chart(ls, win, w, &layout);
