@@ -141,6 +141,31 @@ typedef struct {
 // Fetch transactions for an account. Caller frees *out. Returns count, -1 on error.
 int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out);
 
+typedef enum {
+    REPORT_GROUP_CATEGORY = 0,
+    REPORT_GROUP_PAYEE = 1,
+} report_group_t;
+
+typedef enum {
+    REPORT_PERIOD_THIS_MONTH = 0,
+    REPORT_PERIOD_LAST_30_DAYS = 1,
+    REPORT_PERIOD_YTD = 2,
+    REPORT_PERIOD_LAST_12_MONTHS = 3,
+} report_period_t;
+
+typedef struct {
+    char label[128];
+    int64_t expense_cents;
+    int64_t income_cents;
+    int64_t net_cents;
+    int txn_count;
+} report_row_t;
+
+// Fetch grouped report rows for the selected dimension and period.
+// Caller frees *out. Returns count, -1 on error.
+int db_get_report_rows(sqlite3 *db, report_group_t group, report_period_t period,
+                       report_row_t **out);
+
 // Budget row for the Budgets screen. utilization_bps is basis points where
 // 10000 = 100%; -1 means utilization is not defined (no active budget limit).
 typedef struct {

@@ -135,7 +135,7 @@ make clean    # clean build artifacts
 - [x] Make entire budget view scrollable, not the individual tables
 - [x] Don't include transfers in the "Transactions" view header lines calculations ([plan](../.claude/plans/transactions-header-exclude-transfers.md))
 - [ ] Delegate import logic across CPU cores for perf
-- [ ] Reports page: Show "Category" and "Payee" summary pages for different time periods
+- [x] Reports page: Show "Category" and "Payee" summary pages for different time periods ([plan](../.claude/plans/reports-category-payee-tabs.md))
 - [ ] Allow user to specify "This edit to the budget only applies to the current month"
 - [ ] Make edit Category popout larger
 - [ ] When multi-selecting, show another header row with the count of selected transactions and the sum of their amounts, "Income", "Expense", and "Net" totals for the selected transactions

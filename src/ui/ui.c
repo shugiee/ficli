@@ -7,6 +7,7 @@
 #include "ui/error_popup.h"
 #include "ui/form.h"
 #include "ui/import_dialog.h"
+#include "ui/report_list.h"
 #include "ui/resize.h"
 #include "ui/txn_list.h"
 
@@ -52,6 +53,7 @@ static struct {
     account_list_state_t *account_list;
     category_list_state_t *category_list;
     budget_list_state_t *budget_list;
+    report_list_state_t *report_list;
     bool dark_mode;
     bool layout_ready;
     int layout_rows;
@@ -135,6 +137,14 @@ static const help_row_t help_rows[] = {
     {"Space / Enter (filter)", "Toggle selected category"},
     {"m (filter)", "Toggle include/exclude mode"},
     {"Esc", "Cancel inline edit / close filter"},
+
+    {"", ""},
+    {NULL, "Reports"},
+    {"[ or ]", "Switch category/payee"},
+    {"/", "Toggle category/payee"},
+    {"p", "Cycle period"},
+    {"s", "Cycle sort column"},
+    {"S", "Toggle sort direction"},
 };
 
 #define HELP_ROW_COUNT ((int)(sizeof(help_rows) / sizeof(help_rows[0])))
@@ -519,6 +529,12 @@ static void ui_draw_content(void) {
         if (state.budget_list)
             budget_list_draw(state.budget_list, state.content,
                              state.content_focused);
+    } else if (state.current_screen == SCREEN_REPORTS) {
+        if (!state.report_list)
+            state.report_list = report_list_create(state.db);
+        if (state.report_list)
+            report_list_draw(state.report_list, state.content,
+                             state.content_focused);
     } else {
         int h, w;
         getmaxyx(state.content, h, w);
@@ -550,6 +566,10 @@ static void ui_draw_status(void) {
                state.current_screen == SCREEN_BUDGETS && state.budget_list) {
         mvwprintw(state.status, 0, 1, "%s",
                   budget_list_status_hint(state.budget_list));
+    } else if (state.content_focused &&
+               state.current_screen == SCREEN_REPORTS && state.report_list) {
+        mvwprintw(state.status, 0, 1, "%s",
+                  report_list_status_hint(state.report_list));
     } else {
         mvwprintw(state.status, 0, 1,
                   "q:Quit  a:Add  i:Import  L:Auto-link  t:Theme  ?:Help  "
@@ -1183,6 +1203,10 @@ static void ui_handle_input(int ch) {
                     (ch == 'e' || ch == 'c' || ch == 'd')) {
                     budget_list_mark_dirty(state.budget_list);
                 }
+                if (state.report_list &&
+                    (ch == 'e' || ch == 'c' || ch == 'd' || ch == 'D')) {
+                    report_list_mark_dirty(state.report_list);
+                }
                 return;
             }
         }
@@ -1196,6 +1220,9 @@ static void ui_handle_input(int ch) {
                 }
                 if (account_changed && state.budget_list) {
                     budget_list_mark_dirty(state.budget_list);
+                }
+                if (account_changed && state.report_list) {
+                    report_list_mark_dirty(state.report_list);
                 }
                 return;
             }
@@ -1211,11 +1238,18 @@ static void ui_handle_input(int ch) {
                 if (category_changed && state.budget_list) {
                     budget_list_mark_dirty(state.budget_list);
                 }
+                if (category_changed && state.report_list) {
+                    report_list_mark_dirty(state.report_list);
+                }
                 return;
             }
         }
         if (state.current_screen == SCREEN_BUDGETS && state.budget_list) {
             if (budget_list_handle_input(state.budget_list, state.content, ch))
+                return;
+        }
+        if (state.current_screen == SCREEN_REPORTS && state.report_list) {
+            if (report_list_handle_input(state.report_list, state.content, ch))
                 return;
         }
 
@@ -1257,6 +1291,8 @@ static void ui_handle_input(int ch) {
             txn_list_mark_dirty(state.txn_list);
         if (res == FORM_SAVED && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
+        if (res == FORM_SAVED && state.report_list)
+            report_list_mark_dirty(state.report_list);
     }
         ui_touch_layout_windows();
         break;
@@ -1269,6 +1305,8 @@ static void ui_handle_input(int ch) {
             txn_list_mark_dirty(state.txn_list);
         if (n > 0 && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
+        if (n > 0 && state.report_list)
+            report_list_mark_dirty(state.report_list);
         ui_touch_layout_windows();
     } break;
     case 'L': {
@@ -1287,6 +1325,8 @@ static void ui_handle_input(int ch) {
             txn_list_mark_dirty(state.txn_list);
         if (result.linked > 0 && state.budget_list)
             budget_list_mark_dirty(state.budget_list);
+        if (result.linked > 0 && state.report_list)
+            report_list_mark_dirty(state.report_list);
 
         char line1[160];
         char line2[160];
@@ -1357,6 +1397,7 @@ void ui_run(sqlite3 *db) {
     state.account_list = NULL;
     state.category_list = NULL;
     state.budget_list = NULL;
+    state.report_list = NULL;
     state.layout_ready = false;
     state.layout_rows = 0;
     state.layout_cols = 0;
@@ -1390,5 +1431,7 @@ void ui_run(sqlite3 *db) {
     state.category_list = NULL;
     budget_list_destroy(state.budget_list);
     state.budget_list = NULL;
+    report_list_destroy(state.report_list);
+    state.report_list = NULL;
     ui_destroy_layout();
 }

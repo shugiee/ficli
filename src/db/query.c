@@ -59,6 +59,21 @@ budget_filter_mode_to_str(budget_category_filter_mode_t mode) {
                : "EXCLUDE_SELECTED";
 }
 
+static const char *report_period_start_expr(report_period_t period) {
+    switch (period) {
+    case REPORT_PERIOD_THIS_MONTH:
+        return "date('now', 'localtime', 'start of month')";
+    case REPORT_PERIOD_LAST_30_DAYS:
+        return "date('now', 'localtime', '-29 days')";
+    case REPORT_PERIOD_YTD:
+        return "date('now', 'localtime', 'start of year')";
+    case REPORT_PERIOD_LAST_12_MONTHS:
+        return "date('now', 'localtime', 'start of month', '-11 months')";
+    default:
+        return NULL;
+    }
+}
+
 static int bind_text_or_null(sqlite3_stmt *stmt, int idx, const char *value) {
     if (value && value[0] != '\0')
         return sqlite3_bind_text(stmt, idx, value, -1, SQLITE_STATIC);
@@ -1389,6 +1404,105 @@ int db_get_transactions(sqlite3 *db, int64_t account_id, txn_row_t **out) {
     }
 
     sqlite3_finalize(stmt);
+    *out = list;
+    return count;
+}
+
+int db_get_report_rows(sqlite3 *db, report_group_t group, report_period_t period,
+                       report_row_t **out) {
+    if (!out)
+        return -1;
+    *out = NULL;
+
+    const char *start_expr = report_period_start_expr(period);
+    if (!start_expr)
+        return -1;
+
+    const char *label_expr = NULL;
+    const char *join_clause = "";
+    if (group == REPORT_GROUP_CATEGORY) {
+        label_expr =
+            "CASE"
+            "  WHEN c.id IS NULL THEN 'Uncategorized'"
+            "  WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+            "  ELSE c.name"
+            " END";
+        join_clause =
+            " LEFT JOIN categories c ON c.id = t.category_id"
+            " LEFT JOIN categories p ON p.id = c.parent_id";
+    } else if (group == REPORT_GROUP_PAYEE) {
+        label_expr =
+            "CASE"
+            "  WHEN t.payee IS NULL OR trim(t.payee) = '' THEN '(No payee)'"
+            "  ELSE t.payee"
+            " END";
+    } else {
+        return -1;
+    }
+
+    char sql[4096];
+    snprintf(
+        sql, sizeof(sql),
+        "SELECT %s AS label,"
+        "       COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount_cents ELSE 0 END), 0),"
+        "       COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount_cents ELSE 0 END), 0),"
+        "       COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount_cents ELSE -t.amount_cents END), 0),"
+        "       COUNT(*)"
+        " FROM transactions t"
+        "%s"
+        " WHERE t.type IN ('EXPENSE', 'INCOME')"
+        "   AND COALESCE(t.reflection_date, t.date) >= %s"
+        "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+        " GROUP BY label"
+        " ORDER BY label COLLATE NOCASE",
+        label_expr, join_clause, start_expr);
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_report_rows prepare: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    int capacity = 32;
+    int count = 0;
+    report_row_t *list = malloc((size_t)capacity * sizeof(report_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            report_row_t *tmp =
+                realloc(list, (size_t)capacity * sizeof(report_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+
+        memset(&list[count], 0, sizeof(report_row_t));
+        const char *label = (const char *)sqlite3_column_text(stmt, 0);
+        snprintf(list[count].label, sizeof(list[count].label), "%s",
+                 label ? label : "");
+        list[count].expense_cents = sqlite3_column_int64(stmt, 1);
+        list[count].income_cents = sqlite3_column_int64(stmt, 2);
+        list[count].net_cents = sqlite3_column_int64(stmt, 3);
+        list[count].txn_count = sqlite3_column_int(stmt, 4);
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_report_rows step: %s\n", sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
     *out = list;
     return count;
 }
