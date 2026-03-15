@@ -109,6 +109,20 @@ typedef struct {
     int64_t net_cents;
 } txn_selected_totals_t;
 
+typedef struct {
+    int summary_col;
+    int balance_value_col;
+    bool show_net;
+    int net_label_col;
+    int net_value_col;
+    bool show_income;
+    int income_label_col;
+    int income_value_col;
+    bool show_expense;
+    int expense_label_col;
+    int expense_value_col;
+} txn_summary_cols_t;
+
 static bool txn_list_is_selected(const txn_list_state_t *ls, int64_t id) {
     if (!ls || ls->selected_count <= 0 || !ls->selected_ids)
         return false;
@@ -690,8 +704,11 @@ static txn_selected_totals_t txn_list_selected_totals(const txn_list_state_t *ls
 }
 
 static void draw_selected_summary_line(const txn_list_state_t *ls, WINDOW *win,
-                                       int w, int row) {
+                                       int w, int row,
+                                       const txn_summary_cols_t *cols) {
     if (!ls || !win || ls->selected_count <= 0 || w <= 4)
+        return;
+    if (!cols)
         return;
 
     txn_selected_totals_t totals = txn_list_selected_totals(ls);
@@ -706,97 +723,58 @@ static void draw_selected_summary_line(const txn_list_state_t *ls, WINDOW *win,
                         sizeof(expense_buf));
     format_signed_cents(totals.net_cents, true, net_buf, sizeof(net_buf));
 
-    char full_text[256];
-    char compact_text[128];
-    char net_only_text[96];
-    int full_len = snprintf(full_text, sizeof(full_text),
-                            "Selected %d   Sum %s   Income %s   Expense %s   Net %s",
-                            totals.selected_count, sum_buf, income_buf,
-                            expense_buf, net_buf);
-    int compact_len = snprintf(compact_text, sizeof(compact_text),
-                               "Selected %d   Sum %s   Net %s",
-                               totals.selected_count, sum_buf, net_buf);
-    int net_only_len = snprintf(net_only_text, sizeof(net_only_text),
-                                "Selected %d   Net %s", totals.selected_count,
-                                net_buf);
-
-    int mode = 3; // 3 full, 2 compact, 1 net-only, 0 count-only
-    int chosen_len = full_len;
-    if (full_len > w - 4) {
-        mode = 2;
-        chosen_len = compact_len;
+    char selected_buf[32];
+    int selected_len =
+        snprintf(selected_buf, sizeof(selected_buf), "%d selected", totals.selected_count);
+    if (selected_len > 0) {
+        int selected_col = cols->summary_col - selected_len - 3;
+        if (selected_col < 2)
+            selected_col = 2;
+        if (selected_col + selected_len <= w - 2) {
+            wattron(win, COLOR_PAIR(COLOR_INFO));
+            mvwprintw(win, row, selected_col, "%s", selected_buf);
+            wattroff(win, COLOR_PAIR(COLOR_INFO));
+        }
     }
-    if (chosen_len > w - 4) {
-        mode = 1;
-        chosen_len = net_only_len;
-    }
-    if (chosen_len > w - 4) {
-        mode = 0;
-        chosen_len = snprintf(net_only_text, sizeof(net_only_text), "Selected %d",
-                              totals.selected_count);
-    }
-    if (chosen_len < 0)
-        return;
 
-    int col = (w - chosen_len) / 2;
-    if (col < 2)
-        col = 2;
-
-    int cur = col;
-    wattron(win, A_BOLD);
-    mvwprintw(win, row, cur, "Selected %d", totals.selected_count);
-    wattroff(win, A_BOLD);
-    cur += snprintf(NULL, 0, "Selected %d", totals.selected_count);
-
-    if (mode >= 2) {
-        mvwprintw(win, row, cur, "   ");
-        cur += 3;
+    if (cols->summary_col >= 2 && cols->balance_value_col > cols->summary_col) {
         wattron(win, A_BOLD);
-        mvwprintw(win, row, cur, "Sum ");
+        mvwprintw(win, row, cols->summary_col, "Sum ");
         wattroff(win, A_BOLD);
-        cur += 4;
         int sum_color = (totals.sum_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(sum_color));
-        mvwprintw(win, row, cur, "%s", sum_buf);
+        mvwprintw(win, row, cols->balance_value_col, "%s", sum_buf);
         wattroff(win, COLOR_PAIR(sum_color));
-        cur += (int)strlen(sum_buf);
     }
 
-    if (mode == 3) {
-        mvwprintw(win, row, cur, "   ");
-        cur += 3;
+    if (cols->show_net && cols->net_label_col >= 2 && cols->net_value_col >= 2) {
         wattron(win, A_BOLD);
-        mvwprintw(win, row, cur, "Income ");
+        mvwprintw(win, row, cols->net_label_col, "Net ");
         wattroff(win, A_BOLD);
-        cur += 7;
-        wattron(win, COLOR_PAIR(COLOR_INCOME));
-        mvwprintw(win, row, cur, "%s", income_buf);
-        wattroff(win, COLOR_PAIR(COLOR_INCOME));
-        cur += (int)strlen(income_buf);
-
-        mvwprintw(win, row, cur, "   ");
-        cur += 3;
-        wattron(win, A_BOLD);
-        mvwprintw(win, row, cur, "Expense ");
-        wattroff(win, A_BOLD);
-        cur += 8;
-        wattron(win, COLOR_PAIR(COLOR_EXPENSE));
-        mvwprintw(win, row, cur, "%s", expense_buf);
-        wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
-        cur += (int)strlen(expense_buf);
-    }
-
-    if (mode >= 1) {
-        mvwprintw(win, row, cur, "   ");
-        cur += 3;
-        wattron(win, A_BOLD);
-        mvwprintw(win, row, cur, "Net ");
-        wattroff(win, A_BOLD);
-        cur += 4;
         int net_color = (totals.net_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(net_color));
-        mvwprintw(win, row, cur, "%s", net_buf);
+        mvwprintw(win, row, cols->net_value_col, "%s", net_buf);
         wattroff(win, COLOR_PAIR(net_color));
+    }
+
+    if (cols->show_income && cols->income_label_col >= 2 &&
+        cols->income_value_col >= 2) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cols->income_label_col, "Income ");
+        wattroff(win, A_BOLD);
+        wattron(win, COLOR_PAIR(COLOR_INCOME));
+        mvwprintw(win, row, cols->income_value_col, "%s", income_buf);
+        wattroff(win, COLOR_PAIR(COLOR_INCOME));
+    }
+
+    if (cols->show_expense && cols->expense_label_col >= 2 &&
+        cols->expense_value_col >= 2) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, cols->expense_label_col, "Expense ");
+        wattroff(win, A_BOLD);
+        wattron(win, COLOR_PAIR(COLOR_EXPENSE));
+        mvwprintw(win, row, cols->expense_value_col, "%s", expense_buf);
+        wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
     }
 }
 
@@ -1331,11 +1309,26 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     if (summary_col < 2)
         summary_col = 2;
 
+    txn_summary_cols_t summary_cols = {
+        .summary_col = summary_col,
+        .balance_value_col = -1,
+        .show_net = false,
+        .net_label_col = -1,
+        .net_value_col = -1,
+        .show_income = false,
+        .income_label_col = -1,
+        .income_value_col = -1,
+        .show_expense = false,
+        .expense_label_col = -1,
+        .expense_value_col = -1,
+    };
+
     int summary_col_cur = summary_col;
     wattron(win, A_BOLD);
     mvwprintw(win, SUMMARY_ROW, summary_col_cur, "Balance ");
     wattroff(win, A_BOLD);
     summary_col_cur += 8;
+    summary_cols.balance_value_col = summary_col_cur;
     int balance_color = (ls->balance_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
     wattron(win, COLOR_PAIR(balance_color));
     mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", balance_buf);
@@ -1345,10 +1338,13 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     if (strstr(summary_text, "MTD net")) {
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
         summary_col_cur += 3;
+        summary_cols.show_net = true;
+        summary_cols.net_label_col = summary_col_cur;
         wattron(win, A_BOLD);
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD net ");
         wattroff(win, A_BOLD);
         summary_col_cur += 8;
+        summary_cols.net_value_col = summary_col_cur;
         int month_color =
             (ls->month_net_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
         wattron(win, COLOR_PAIR(month_color));
@@ -1360,10 +1356,13 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     if (strstr(summary_text, "MTD income")) {
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
         summary_col_cur += 3;
+        summary_cols.show_income = true;
+        summary_cols.income_label_col = summary_col_cur;
         wattron(win, A_BOLD);
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD income ");
         wattroff(win, A_BOLD);
         summary_col_cur += 11;
+        summary_cols.income_value_col = summary_col_cur;
         wattron(win, COLOR_PAIR(COLOR_INCOME));
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_income_buf);
         wattroff(win, COLOR_PAIR(COLOR_INCOME));
@@ -1373,16 +1372,19 @@ void txn_list_draw(txn_list_state_t *ls, WINDOW *win, bool focused) {
     if (strstr(summary_text, "MTD expenses")) {
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "   ");
         summary_col_cur += 3;
+        summary_cols.show_expense = true;
+        summary_cols.expense_label_col = summary_col_cur;
         wattron(win, A_BOLD);
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "MTD expenses ");
         wattroff(win, A_BOLD);
         summary_col_cur += 13;
+        summary_cols.expense_value_col = summary_col_cur;
         wattron(win, COLOR_PAIR(COLOR_EXPENSE));
         mvwprintw(win, SUMMARY_ROW, summary_col_cur, "%s", month_expense_buf);
         wattroff(win, COLOR_PAIR(COLOR_EXPENSE));
     }
 
-    draw_selected_summary_line(ls, win, w, SUMMARY_ROW + 1);
+    draw_selected_summary_line(ls, win, w, SUMMARY_ROW + 1, &summary_cols);
 
     if (layout.show_chart) {
         draw_balance_chart(ls, win, w, &layout);
