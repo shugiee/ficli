@@ -25,6 +25,7 @@ static const char *account_type_labels[] = {"Cash",           "Checking",
 struct account_list_state {
     sqlite3 *db;
     account_t *accounts;
+    int64_t *account_balance_cents;
     int account_count;
     int cursor; // negative = controls, 0+ = list items
     int scroll_offset;
@@ -38,6 +39,32 @@ struct account_list_state {
     bool dirty;
     bool changed;
 };
+
+static void format_signed_cents(int64_t cents, bool show_plus, char *buf, int n) {
+    int64_t abs_cents = cents < 0 ? -cents : cents;
+    int64_t whole = abs_cents / 100;
+    int64_t frac = abs_cents % 100;
+
+    char raw[32];
+    snprintf(raw, sizeof(raw), "%ld", (long)whole);
+    int raw_len = (int)strlen(raw);
+
+    char formatted[48];
+    int fi = 0;
+    for (int i = 0; i < raw_len; i++) {
+        if (i > 0 && (raw_len - i) % 3 == 0)
+            formatted[fi++] = ',';
+        formatted[fi++] = raw[i];
+    }
+    formatted[fi] = '\0';
+
+    if (cents < 0)
+        snprintf(buf, n, "-%s.%02ld", formatted, (long)frac);
+    else if (show_plus)
+        snprintf(buf, n, "+%s.%02ld", formatted, (long)frac);
+    else
+        snprintf(buf, n, "%s.%02ld", formatted, (long)frac);
+}
 
 static bool confirm_delete_account(WINDOW *parent, const char *account_name,
                                    int txn_count) {
@@ -110,11 +137,27 @@ static bool confirm_delete_account(WINDOW *parent, const char *account_name,
 static void reload(account_list_state_t *ls) {
     free(ls->accounts);
     ls->accounts = NULL;
+    free(ls->account_balance_cents);
+    ls->account_balance_cents = NULL;
     ls->account_count = 0;
 
     ls->account_count = db_get_accounts(ls->db, &ls->accounts);
     if (ls->account_count < 0)
         ls->account_count = 0;
+
+    if (ls->account_count > 0) {
+        ls->account_balance_cents =
+            calloc((size_t)ls->account_count, sizeof(*ls->account_balance_cents));
+        if (ls->account_balance_cents) {
+            for (int i = 0; i < ls->account_count; i++) {
+                if (db_get_account_balance_cents(ls->db, ls->accounts[i].id,
+                                                 &ls->account_balance_cents[i]) <
+                    0) {
+                    ls->account_balance_cents[i] = 0;
+                }
+            }
+        }
+    }
 
     if (ls->cursor >= 0 && ls->cursor >= ls->account_count)
         ls->cursor =
@@ -137,6 +180,7 @@ void account_list_destroy(account_list_state_t *ls) {
     if (!ls)
         return;
     free(ls->accounts);
+    free(ls->account_balance_cents);
     free(ls);
 }
 
@@ -360,11 +404,22 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
     int right_col = w - 2;
     int gap = 2;
     int max_name_len = 0;
+    int max_balance_len = 0;
     int max_type_len = 0;
     for (int i = 0; i < ls->account_count; i++) {
         int name_len = (int)strlen(ls->accounts[i].name);
         if (name_len > max_name_len)
             max_name_len = name_len;
+
+        char balance_buf[24];
+        int64_t balance_cents = 0;
+        if (ls->account_balance_cents)
+            balance_cents = ls->account_balance_cents[i];
+        format_signed_cents(balance_cents, false, balance_buf,
+                            (int)sizeof(balance_buf));
+        int balance_len = (int)strlen(balance_buf);
+        if (balance_len > max_balance_len)
+            max_balance_len = balance_len;
 
         const char *tlabel = account_type_labels[ls->accounts[i].type];
         char type_tag[32];
@@ -380,13 +435,19 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
             max_type_len = type_len;
     }
 
-    int type_col = left_col + max_name_len + gap;
-    int max_type_col = right_col - max_type_len;
-    if (type_col > max_type_col)
-        type_col = max_type_col;
-    if (type_col < left_col + gap + 1)
-        type_col = left_col + gap + 1;
-    int name_w = type_col - left_col - gap;
+    int type_col = right_col - max_type_len;
+    int balance_col = type_col - gap - max_balance_len;
+    int name_w = balance_col - left_col - gap;
+
+    if (name_w < 10) {
+        type_col = -1;
+        balance_col = right_col - max_balance_len;
+        name_w = balance_col - left_col - gap;
+    }
+    if (name_w < 1) {
+        balance_col = -1;
+        name_w = right_col - left_col;
+    }
     if (name_w < 1)
         name_w = 1;
 
@@ -408,6 +469,20 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
         mvwprintw(win, row, left_col, "%-*.*s", name_w, name_w,
                   ls->accounts[idx].name);
 
+        if (balance_col >= 0) {
+            char balance_buf[24];
+            int64_t balance_cents = 0;
+            if (ls->account_balance_cents)
+                balance_cents = ls->account_balance_cents[idx];
+            format_signed_cents(balance_cents, false, balance_buf,
+                                (int)sizeof(balance_buf));
+
+            int balance_color = (balance_cents < 0) ? COLOR_EXPENSE : COLOR_INCOME;
+            wattron(win, COLOR_PAIR(balance_color));
+            mvwprintw(win, row, balance_col, "%*s", max_balance_len, balance_buf);
+            wattroff(win, COLOR_PAIR(balance_color));
+        }
+
         const char *tlabel = account_type_labels[ls->accounts[idx].type];
         char type_tag[32];
         if (ls->accounts[idx].type == ACCOUNT_CREDIT_CARD &&
@@ -417,7 +492,7 @@ void account_list_draw(account_list_state_t *ls, WINDOW *win, bool focused) {
         } else {
             snprintf(type_tag, sizeof(type_tag), "[%s]", tlabel);
         }
-        if (type_col + (int)strlen(type_tag) < right_col) {
+        if (type_col >= 0 && type_col + (int)strlen(type_tag) < right_col) {
             wattron(win, A_DIM);
             mvwprintw(win, row, type_col, "%s", type_tag);
             wattroff(win, A_DIM);

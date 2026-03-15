@@ -145,7 +145,7 @@ make clean    # clean build artifacts
 - [ ] Don't show "Income" in Credit Card account headers
 - [ ] Support adding a budget for a hidden category in budgets view (since we currenly only show categories matching transactions in the current month)
 - [ ] Add CLI arguments for quick actions (e.g., `ficli import -account "CapitalOne" -file ~/Downloads/transactions.csv`) or `ficli import` which then queries for accounts and asks which file in ~/Downloads relates to each account (allowing skipping that account if no file matches)
-- [ ] Show summary information on Accounts page. E.g. net cash balance, total value (including assets and investments)
+- [x] Show summary information on Accounts page. E.g. net cash balance, total value (including assets and investments) ([plan](../.claude/plans/accounts-page-summary.md))
 - [ ] Allow annual budget for categories with monthly breakdowns
 - [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
 - [ ] Add investment purchases/sales with cost basis tracking
