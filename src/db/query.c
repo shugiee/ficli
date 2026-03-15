@@ -1507,6 +1507,151 @@ int db_get_report_rows(sqlite3 *db, report_group_t group, report_period_t period
     return count;
 }
 
+int db_get_report_transactions(sqlite3 *db, report_group_t group,
+                               report_period_t period, const char *label,
+                               budget_txn_row_t **out) {
+    if (!out || !label)
+        return -1;
+    *out = NULL;
+
+    const char *start_expr = report_period_start_expr(period);
+    if (!start_expr)
+        return -1;
+
+    const char *category_label_expr =
+        "CASE"
+        "  WHEN c.id IS NULL THEN 'Uncategorized'"
+        "  WHEN p.name IS NOT NULL THEN p.name || ':' || c.name"
+        "  ELSE c.name"
+        " END";
+
+    const char *where_group = NULL;
+    bool bind_label = false;
+    if (group == REPORT_GROUP_CATEGORY) {
+        if (strcmp(label, "Uncategorized") == 0) {
+            where_group = "t.category_id IS NULL";
+        } else {
+            where_group = "(";
+            bind_label = true;
+        }
+    } else if (group == REPORT_GROUP_PAYEE) {
+        if (strcmp(label, "(No payee)") == 0) {
+            where_group = "(t.payee IS NULL OR trim(t.payee) = '')";
+        } else {
+            where_group = "t.payee = ?";
+            bind_label = true;
+        }
+    } else {
+        return -1;
+    }
+
+    char sql[4096];
+    if (group == REPORT_GROUP_CATEGORY && bind_label) {
+        snprintf(sql, sizeof(sql),
+                 "SELECT t.id, t.amount_cents, t.type,"
+                 "       COALESCE(t.reflection_date, t.date),"
+                 "       COALESCE(a.name, ''),"
+                 "       %s,"
+                 "       COALESCE(t.payee, ''),"
+                 "       COALESCE(t.description, '')"
+                 " FROM transactions t"
+                 " LEFT JOIN accounts a ON a.id = t.account_id"
+                 " LEFT JOIN categories c ON c.id = t.category_id"
+                 " LEFT JOIN categories p ON p.id = c.parent_id"
+                 " WHERE t.type IN ('EXPENSE', 'INCOME')"
+                 "   AND COALESCE(t.reflection_date, t.date) >= %s"
+                 "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+                 "   AND (%s = ?)"
+                 " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+                 category_label_expr, start_expr, category_label_expr);
+    } else {
+        snprintf(sql, sizeof(sql),
+                 "SELECT t.id, t.amount_cents, t.type,"
+                 "       COALESCE(t.reflection_date, t.date),"
+                 "       COALESCE(a.name, ''),"
+                 "       %s,"
+                 "       COALESCE(t.payee, ''),"
+                 "       COALESCE(t.description, '')"
+                 " FROM transactions t"
+                 " LEFT JOIN accounts a ON a.id = t.account_id"
+                 " LEFT JOIN categories c ON c.id = t.category_id"
+                 " LEFT JOIN categories p ON p.id = c.parent_id"
+                 " WHERE t.type IN ('EXPENSE', 'INCOME')"
+                 "   AND COALESCE(t.reflection_date, t.date) >= %s"
+                 "   AND COALESCE(t.reflection_date, t.date) <= date('now', 'localtime')"
+                 "   AND %s"
+                 " ORDER BY COALESCE(t.reflection_date, t.date) DESC, t.id DESC",
+                 category_label_expr, start_expr, where_group);
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "db_get_report_transactions prepare: %s\n",
+                sqlite3_errmsg(db));
+        return -1;
+    }
+
+    if (bind_label)
+        sqlite3_bind_text(stmt, 1, label, -1, SQLITE_TRANSIENT);
+
+    int capacity = 32;
+    int count = 0;
+    budget_txn_row_t *list =
+        malloc((size_t)capacity * sizeof(budget_txn_row_t));
+    if (!list) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= capacity) {
+            capacity *= 2;
+            budget_txn_row_t *tmp =
+                realloc(list, (size_t)capacity * sizeof(budget_txn_row_t));
+            if (!tmp) {
+                free(list);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            list = tmp;
+        }
+
+        memset(&list[count], 0, sizeof(budget_txn_row_t));
+        list[count].id = sqlite3_column_int64(stmt, 0);
+        list[count].amount_cents = sqlite3_column_int64(stmt, 1);
+        const char *ttype = (const char *)sqlite3_column_text(stmt, 2);
+        list[count].type = transaction_type_from_str(ttype);
+        const char *effective_date = (const char *)sqlite3_column_text(stmt, 3);
+        snprintf(list[count].effective_date, sizeof(list[count].effective_date),
+                 "%s", effective_date ? effective_date : "");
+        const char *account_name = (const char *)sqlite3_column_text(stmt, 4);
+        snprintf(list[count].account_name, sizeof(list[count].account_name),
+                 "%s", account_name ? account_name : "");
+        const char *category_name = (const char *)sqlite3_column_text(stmt, 5);
+        snprintf(list[count].category_name, sizeof(list[count].category_name),
+                 "%s", category_name ? category_name : "");
+        const char *payee = (const char *)sqlite3_column_text(stmt, 6);
+        snprintf(list[count].payee, sizeof(list[count].payee), "%s",
+                 payee ? payee : "");
+        const char *description = (const char *)sqlite3_column_text(stmt, 7);
+        snprintf(list[count].description, sizeof(list[count].description), "%s",
+                 description ? description : "");
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "db_get_report_transactions step: %s\n",
+                sqlite3_errmsg(db));
+        free(list);
+        return -1;
+    }
+
+    *out = list;
+    return count;
+}
+
 int db_get_budget_transactions_for_month(sqlite3 *db, int64_t category_id,
                                          const char *month_ym,
                                          budget_txn_row_t **out) {

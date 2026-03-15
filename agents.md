@@ -134,9 +134,8 @@ make clean    # clean build artifacts
 - [x] Rename "Run" column in budget view to "Running +/-"
 - [x] Make entire budget view scrollable, not the individual tables
 - [x] Don't include transfers in the "Transactions" view header lines calculations ([plan](../.claude/plans/transactions-header-exclude-transfers.md))
-- [ ] Delegate import logic across CPU cores for perf
 - [x] Reports page: Show "Category" and "Payee" summary pages for different time periods ([plan](../.claude/plans/reports-category-payee-tabs.md))
-- [ ] Allow hitting enter on row in reports page to see a transactions list filtered to that category or payee (similat to what we do in Budgets view)
+- [x] Allow hitting enter on row in reports page to see a transactions list filtered to that category or payee (similat to what we do in Budgets view) ([plan](../.claude/plans/reports-enter-matching-transactions.md))
 - [ ] Allow user to specify "This edit to the budget only applies to the current month"
 - [ ] Make edit Category popout larger
 - [x] When multi-selecting, show another header row with the count of selected transactions and the sum of their amounts, "Income", "Expense", and "Net" totals for the selected transactions ([plan](../.claude/plans/multi-select-header-totals.md))
@@ -147,14 +146,13 @@ make clean    # clean build artifacts
 - [ ] Support adding a budget for a hidden category in budgets view (since we currenly only show categories matching transactions in the current month)
 - [ ] Add CLI arguments for quick actions (e.g., `ficli import -account "CapitalOne" -file ~/Downloads/transactions.csv`) or `ficli import` which then queries for accounts and asks which file in ~/Downloads relates to each account (allowing skipping that account if no file matches)
 - [ ] Show summary information on Accounts page. E.g. net cash balance, total value (including assets and investments)
-- [ ] Allow user to focus and edit transactions in budget view
 - [ ] Allow annual budget for categories with monthly breakdowns
 - [ ] Automatically convert transaction to transfer when importing a transaction and there's a matching transaction in another account
-- [ ] Summary/report views
 - [ ] Add investment purchases/sales with cost basis tracking
 - [ ] Allow user to send set of selected transactions to LLM for auto-categorization
 - [ ] Allow user to choose when to save changes; don't persist anything until they save
 - [ ] Offer to auto-create accounts when importing transactions with an account that doesn't exist yet
+- [ ] Delegate import logic across CPU cores for perf
 - [ ] Prevent keyboard events from hitting UI behind the keyboard shortcut popout
 - [ ] Allow filtering transactions list using regex
 - [ ] Allow archiving accounts

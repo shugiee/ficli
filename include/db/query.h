@@ -194,6 +194,12 @@ typedef struct {
     char description[256];
 } budget_txn_row_t;
 
+// Fetch report-detail transactions for one grouped row label.
+// Caller frees *out. Returns count, -1 on error.
+int db_get_report_transactions(sqlite3 *db, report_group_t group,
+                               report_period_t period, const char *label,
+                               budget_txn_row_t **out);
+
 typedef enum {
     BUDGET_CATEGORY_FILTER_EXCLUDE_SELECTED = 0,
     BUDGET_CATEGORY_FILTER_INCLUDE_SELECTED = 1

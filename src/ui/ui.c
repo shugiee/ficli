@@ -143,6 +143,8 @@ static const help_row_t help_rows[] = {
     {NULL, "Reports"},
     {"[ or ]", "Switch category/payee"},
     {"/", "Toggle category/payee"},
+    {"Enter", "Show matching transactions"},
+    {"e", "Edit selected matching transaction"},
     {"p", "Cycle period"},
     {"s", "Cycle sort column"},
     {"S", "Toggle sort direction"},
